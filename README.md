@@ -417,9 +417,26 @@ reachable/quota isn't exhausted.
 
 ### Redeploy after code changes (automatic: push to GitHub)
 
-Pushing to `main` on GitHub (`kimtee92/image-to-csv-cloud`) deploys automatically.
-The Cloud Build trigger `deploy-on-push-main` (project `image-to-csv-app`, region
-`us-central1`) runs [cloudbuild.yaml](cloudbuild.yaml):
+Two branches, two Cloud Run services, one pipeline:
+
+| Branch | Trigger | Service | URL |
+|---|---|---|---|
+| `dev` | `deploy-staging-on-push-dev` | `image-to-csv-staging` | https://image-to-csv-staging-358885129386.us-central1.run.app |
+| `main` | `deploy-on-push-main` | `image-to-csv` (live) | https://image-to-csv-358885129386.us-central1.run.app |
+
+Workflow, no local machine needed:
+
+1. Make changes on `dev`: GitHub's web editor, a Claude Code session on the
+   repo, or a local clone. Each push deploys to **staging** in a few minutes.
+2. Test on the staging URL. It uses the same model and settings as live
+   (max 2 instances, scales to zero when idle).
+3. When it's right, open a pull request `dev` → `main` on GitHub and merge it
+   (works from the GitHub mobile app). The merge deploys to **live**.
+
+If a step fails (preflight, build, health check), nothing is deployed and the
+service keeps serving its previous revision.
+
+Both triggers run [cloudbuild.yaml](cloudbuild.yaml); the staging one only overrides `_SERVICE`:
 
 1. **preflight**: `PREFLIGHT_ONLY=1 ./deploy.sh` on `python:3.11-slim`, the same
    syntax, import and client-workbook OOXML checks as a manual deploy. A failure

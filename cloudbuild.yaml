@@ -1,5 +1,11 @@
-# CI/CD for image-to-csv: every push to main on GitHub runs this via a Cloud Build
-# trigger in project image-to-csv-app (region us-central1).
+# CI/CD for image-to-csv, run by two Cloud Build triggers in project
+# image-to-csv-app (region us-central1), same steps, different service:
+#
+#   push to dev  -> deploy-staging-on-push-dev -> Cloud Run image-to-csv-staging
+#   push to main -> deploy-on-push-main        -> Cloud Run image-to-csv (live)
+#
+# The staging trigger overrides _SERVICE; everything else is shared, so what
+# passes on staging is exactly what ships to live.
 #
 #   1. preflight  - the same checks as ./deploy.sh (syntax, imports, every client
 #                   workbook fills to valid OOXML), on the container's Python
