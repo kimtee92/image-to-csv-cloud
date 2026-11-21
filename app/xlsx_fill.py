@@ -660,6 +660,39 @@ _SAME_SHEET_REF = re.compile(
     r"(?<![A-Za-z0-9_.!'\]])\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?(?![A-Za-z0-9_(])")
 
 
+# A time cell holding only a "no punch" mark: dashes, dots, underscores, "n/a".
+_PLACEHOLDER = re.compile(r"^\s*(?:[-‒-―_.~]+|n/?a)\s*$", re.I)
+
+
+def _has_punch(row: dict) -> bool:
+    """A real clock time in any in/out slot. 0:00 alone is how some forms print an
+    empty day (Alberto's computed rows), so it doesn't count when choosing rows."""
+    return any((to_serial(v) or 0) > 0 for k, v in row.items()
+               if k.endswith("_in") or k.endswith("_out"))
+
+
+def _fit_rows(rows: list[dict], size: int) -> tuple[list[dict], int]:
+    """Pick the `size` consecutive rows that hold the most punched days.
+
+    A block holds one pay period (16 rows), but a full-month DTR form comes back
+    with a row for every day 1-31, punched or not. Keeping the first 16 rows
+    dropped the period's later days whenever it didn't start on the 1st: a June
+    11-25 Miniso form lost days 17-25. Order is kept, so the block still reads
+    day by day. Among equally good windows, prefer one that starts on a punched
+    day, then the earliest.
+
+    Returns (rows, number of punched days that still didn't fit).
+    """
+    punched = [_has_punch(r) for r in rows]
+    best_start, best_key = 0, None
+    for start in range(len(rows) - size + 1):
+        key = (sum(punched[start:start + size]), punched[start], -start)
+        if best_key is None or key > best_key:
+            best_start, best_key = start, key
+    kept = rows[best_start:best_start + size]
+    return kept, sum(punched) - sum(punched[best_start:best_start + size])
+
+
 def _columns_read_in_row(root: ET.Element, row_n: int) -> set[str]:
     """Columns this row's own formulas read, with ranges expanded (C6:H6 -> C..H)."""
     read: set[str] = set()
@@ -744,11 +777,12 @@ def fill(template_path: str, blocks: list[dict], cfg: dict,
 
         rows = block.get("rows") or []
         if len(rows) > per_block:
-            warnings.append(
-                f"{block.get('name','?')}: {len(rows)} days but a block holds "
-                f"{per_block}; the extra rows were dropped."
-            )
-            rows = rows[:per_block]
+            rows, lost = _fit_rows(rows, per_block)
+            if lost:
+                warnings.append(
+                    f"{block.get('name','?')}: {lost} day(s) with punches didn't fit the "
+                    f"{per_block}-day block and were left out; check this employee's dates."
+                )
 
         for n in range(per_block):
             r = first_row + n
@@ -758,11 +792,14 @@ def fill(template_path: str, blocks: list[dict], cfg: dict,
                 serial = to_serial(raw)
                 if serial is not None:
                     sheet.write(letter, r, serial, is_time=True)
-                elif (slot.endswith("_in") or slot.endswith("_out")) and re.search(r"\d", str(raw or "")):
+                elif (slot.endswith("_in") or slot.endswith("_out")) and (
+                        re.search(r"\d", str(raw or "")) or _PLACEHOLDER.match(str(raw or ""))):
                     # Digits that didn't parse as a time — "20:5PM", a stray "29" — are
                     # never a valid entry for a time column, and as text they break any
-                    # formula doing arithmetic on it. Clear the cell instead; words such
-                    # as REST DAY or OFF are left to the rules above and below.
+                    # formula doing arithmetic on it. Neither is a bare "-" (how Peak 24
+                    # and Tokyo forms mark a day with no punch): written as text it made
+                    # the day's hours and the block total #VALUE!. Clear the cell instead;
+                    # words such as REST DAY or OFF are left to the rules above and below.
                     sheet.write(letter, r, "")
                 else:
                     sheet.write(letter, r, raw)
