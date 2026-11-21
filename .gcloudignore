@@ -20,9 +20,13 @@ benchmark/
 *.jpeg
 *.png
 *.csv
+*.pdf
 
-# Secrets
+# Secrets — every .env variant, including backups like .env.bak.<n> (one of
+# those, holding GEMINI_API_KEY, reached the Cloud Build source bucket once).
 .env
+.env*
+!.env.example
 
 # Local-only tooling and docs
 .git

@@ -9,7 +9,11 @@
 #
 #   1. preflight  - the same checks as ./deploy.sh (syntax, imports, every client
 #                   workbook fills to valid OOXML), on the container's Python
-#   2. build      - docker build of the repo's Dockerfile
+#   1b. recalc    - runs alongside preflight: LibreOffice recalculates a test
+#                   export of every client workbook; fails on #NAME?/errors or any
+#                   value that differs from Excel 365 (ci/recalc_check.py,
+#                   expected values in ci/golden/)
+#   2. build      - docker build of the repo's Dockerfile (waits for 1 and 1b)
 #   3. push       - to the Artifact Registry repo Cloud Run already uses
 #   4. deploy     - new Cloud Run revision from that image
 #
@@ -29,8 +33,23 @@ steps:
     entrypoint: bash
     args: ["-c", "PREFLIGHT_ONLY=1 bash deploy.sh"]
 
+  # Debian's LibreOffice (7.4) has no LET or XLOOKUP, like Excel 2016/2019, so a
+  # 365-only function that slips into an export shows up here as #NAME?.
+  - id: recalc
+    name: debian:bookworm-slim
+    waitFor: ["-"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        apt-get update -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libreoffice-calc-nogui python3 >/dev/null
+        python3 ci/recalc_check.py check
+
   - id: build
     name: gcr.io/cloud-builders/docker
+    waitFor: ["preflight", "recalc"]
     args: ["build", "-t", "${_IMAGE}:${SHORT_SHA}", "-t", "${_IMAGE}:latest", "."]
 
   - id: push
