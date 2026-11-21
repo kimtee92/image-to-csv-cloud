@@ -162,6 +162,8 @@ import re, sys, zipfile, io, asyncio, pathlib
 import xml.etree.ElementTree as ET
 sys.path.insert(0, sys.argv[1])
 from clients import CLIENTS, LAYOUTS, TEMPLATES
+import formula_compat
+import html
 import xlsx_fill
 
 bad = []
@@ -196,6 +198,15 @@ for key, client in CLIENTS.items():
                 bad.append(f"  {label}/{name}: malformed XML ({exc})")
                 continue
             text = raw.decode("utf-8", "ignore")
+            # The export forces a full recalculation, so a function Excel 2016/2019
+            # lacks shows #NAME? there (24 Chicken ND column, Nov 2026). Every
+            # LET/SWITCH/XLOOKUP must have been rewritten by formula_compat.
+            if name.startswith("xl/worksheets/"):
+                left = set()
+                for fm in re.finditer(r"<f\b[^>]*>([^<]*)</f>", text):
+                    left |= formula_compat.unsupported_functions(html.unescape(fm.group(1)))
+                if left:
+                    bad.append(f"  {label}/{name}: formulas still need Excel 365: {sorted(left)}")
             m = re.search(r'Ignorable="([^"]*)"', text)
             if m:
                 declared = set(re.findall(r"xmlns:([A-Za-z0-9_]+)=", text))
