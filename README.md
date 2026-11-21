@@ -415,9 +415,36 @@ Expect `{"status":"ok","ocr_ready":true,...}`. If `ocr_ready` is `false`,
 check the secret is attached correctly (step 1) and that Gemini's API is
 reachable/quota isn't exhausted.
 
-### Redeploy after code changes
+### Redeploy after code changes (automatic: push to GitHub)
 
-Use the script — it stages, preflights, then deploys:
+Pushing to `main` on GitHub (`kimtee92/image-to-csv-cloud`) deploys automatically.
+The Cloud Build trigger `deploy-on-push-main` (project `image-to-csv-app`, region
+`us-central1`) runs [cloudbuild.yaml](cloudbuild.yaml):
+
+1. **preflight**: `PREFLIGHT_ONLY=1 ./deploy.sh` on `python:3.11-slim`, the same
+   syntax, import and client-workbook OOXML checks as a manual deploy. A failure
+   stops the build before anything ships.
+2. **build / push**: Docker build of the repo, tagged with the commit SHA, into
+   Artifact Registry `cloud-run-source-deploy/image-to-csv`.
+3. **deploy**: `gcloud run deploy image-to-csv --image …:<sha>`. Only the image
+   changes; env vars, secrets, memory and scaling stay as set on the service.
+4. **health**: `GET /api/health` must answer, or the build is marked failed.
+
+The build runs as the `cloudbuild-deployer` service account (Cloud Build builder,
+Run developer, Artifact Registry writer, log writer, and actAs on the runtime
+compute SA). Watch builds in the console under Cloud Build → History, or:
+```bash
+gcloud builds list --region us-central1 --limit 5
+```
+Roll back by redirecting traffic to a previous revision:
+```bash
+gcloud run services update-traffic image-to-csv --region us-central1 --to-revisions REVISION=100
+```
+
+### Redeploy manually
+
+`./deploy.sh` still works for a one-off deploy from a machine with gcloud. It
+stages, preflights, then deploys:
 ```bash
 ./deploy.sh
 ```
