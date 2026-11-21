@@ -21,6 +21,9 @@ import re
 import shutil
 import zipfile
 import xml.etree.ElementTree as ET
+from html import escape as _xml_escape, unescape as _xml_unescape
+
+import formula_compat
 
 NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 RNS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -600,6 +603,47 @@ def _extend_sheet_ranges(xml: bytes, sheet_name: str, min_end: int, added: int) 
     return text.encode("utf-8"), hits
 
 
+def _downgrade_root(root: ET.Element, where: str, problems: list[str]) -> int:
+    """Rewrite LET/SWITCH/XLOOKUP in every formula of a parsed sheet (see formula_compat)."""
+    changed = 0
+    for c in root.iter(_q("c")):
+        f = c.find(_q("f"))
+        if f is None or not f.text:
+            continue
+        new, problem = formula_compat.downgrade_safe(f.text)
+        if problem:
+            problems.append(f"{where}!{c.get('r')}: {problem}")
+        elif new != f.text:
+            f.text = new
+            changed += 1
+    return changed
+
+
+_F_ELEMENT = re.compile(r"(<f\b[^>]*>)([^<]*)(</f>)")
+
+
+def _downgrade_xml(xml: bytes, where: str, problems: list[str]) -> tuple[bytes, int]:
+    """Same as _downgrade_root, on a sheet we otherwise leave byte-for-byte alone."""
+    text = xml.decode("utf-8")
+    if "_xlfn." not in text and "_xlpm." not in text:
+        return xml, 0
+    changed = 0
+
+    def sub(m: re.Match) -> str:
+        nonlocal changed
+        old = _xml_unescape(m.group(2))
+        new, problem = formula_compat.downgrade_safe(old)
+        if problem:
+            problems.append(f"{where}: {problem}")
+            return m.group(0)
+        if new == old:
+            return m.group(0)
+        changed += 1
+        return m.group(1) + _xml_escape(new, quote=False) + m.group(3)
+
+    return _F_ELEMENT.sub(sub, text).encode("utf-8"), changed
+
+
 def _force_recalc(wb_xml: bytes) -> bytes:
     """Make Excel recalculate on open, since we strip the cached values."""
     text = wb_xml.decode("utf-8")
@@ -632,11 +676,15 @@ def _columns_read_in_row(root: ET.Element, row_n: int) -> set[str]:
     return read
 
 
-def fill(template_path: str, blocks: list[dict], cfg: dict) -> tuple[bytes, list[str]]:
+def fill(template_path: str, blocks: list[dict], cfg: dict,
+         compat: bool = True) -> tuple[bytes, list[str]]:
     """Fill `blocks` (one per employee) into a copy of the client's workbook.
 
     Each block is {"name": str, "rows": [{slot: value}, ...]}. `cfg` is the
     TEMPLATES entry describing the sheet, block geometry and column→slot map.
+    `compat` rewrites Excel 365-only functions so Excel 2016/2019 can recalculate
+    the file (see formula_compat); False keeps the client's formulas verbatim and
+    exists for side-by-side testing.
     Returns (xlsx bytes, warnings).
     """
     warnings: list[str] = []
@@ -770,6 +818,25 @@ def fill(template_path: str, blocks: list[dict], cfg: dict) -> tuple[bytes, list
             widened += hits
         if widened:
             log.info("stretched %d lookup range(s) to reach %d employees", widened, len(blocks))
+
+    # The export drops every cached result and forces a full recalculation, so
+    # each formula has to be one the recipient's Excel can evaluate. DPAM's
+    # templates use LET/SWITCH/XLOOKUP; Excel 2016/2019 shows #NAME? for those.
+    if compat:
+        problems: list[str] = []
+        rewritten = _downgrade_root(root, cfg["sheet"], problems)
+        for name in list(parts):
+            if name.startswith("xl/worksheets/") and name.endswith(".xml") and name != sheet_path:
+                parts[name], n = _downgrade_xml(parts[name], name.rsplit("/", 1)[-1], problems)
+                rewritten += n
+        if rewritten:
+            log.info("rewrote %d formula(s) for Excel 2016/2019 compatibility", rewritten)
+        for p in problems[:20]:
+            log.warning("formula left as-is (needs Excel 2021/365): %s", p)
+        if problems:
+            warnings.append(
+                f"{len(problems)} formula(s) use functions older Excel can't calculate; "
+                "those cells may show #NAME? in Excel 2019 or earlier.")
 
     parts[sheet_path] = _restore_ns_decls(
         sheet_source, ET.tostring(root, encoding="utf-8", xml_declaration=True))
