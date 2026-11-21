@@ -1,0 +1,20 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Client timesheet scans, extracted data and benchmark runs: real employee data.
+# Never commit. Each client drop arrives as a new reference<N>/ folder, hence the glob.
+reference*/
+benchmark/
+TIMEKEEPING/
+*.jpg
+*.jpeg
+*.png
+*.csv
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/

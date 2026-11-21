@@ -1,0 +1,61 @@
+# CI/CD for image-to-csv: every push to main on GitHub runs this via a Cloud Build
+# trigger in project image-to-csv-app (region us-central1).
+#
+#   1. preflight  - the same checks as ./deploy.sh (syntax, imports, every client
+#                   workbook fills to valid OOXML), on the container's Python
+#   2. build      - docker build of the repo's Dockerfile
+#   3. push       - to the Artifact Registry repo Cloud Run already uses
+#   4. deploy     - new Cloud Run revision from that image
+#
+# The deploy step passes only --image. Env vars (GEMINI_MODEL, GEMINI_BASE_URL,
+# REASONING_EFFORT, ...), memory, concurrency, scaling and the runtime service
+# account stay as configured on the service; change those with
+# `gcloud run services update` or ./deploy.sh, not here.
+
+substitutions:
+  _SERVICE: image-to-csv
+  _REGION: us-central1
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/image-to-csv
+
+steps:
+  - id: preflight
+    name: python:3.11-slim
+    entrypoint: bash
+    args: ["-c", "PREFLIGHT_ONLY=1 bash deploy.sh"]
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}:${SHORT_SHA}", "-t", "${_IMAGE}:latest", "."]
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_IMAGE}"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_IMAGE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --quiet
+
+  - id: health
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        URL=$(gcloud run services describe ${_SERVICE} --region ${_REGION} --format='value(status.url)')
+        echo "Service: $$URL"
+        curl -fsS --max-time 60 "$$URL/api/health"
+
+images:
+  - ${_IMAGE}:${SHORT_SHA}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

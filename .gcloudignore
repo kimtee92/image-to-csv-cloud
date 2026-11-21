@@ -1,0 +1,34 @@
+# What gcloud uploads as build source. Separate from .dockerignore: that one only
+# controls what lands in the image, and does NOT stop `gcloud run deploy --source .`
+# from uploading a file to Cloud Storage. Client timesheet scans were reaching the
+# staging bucket that way.
+#
+# Prefer ./deploy.sh, which builds from a temp dir containing only app files.
+
+# Client timesheet scans and extracted CSVs — real employee data, never upload.
+# Named explicitly rather than relying only on extension rules below:
+# TIMEKEEPING/ and benchmark/ also hold .xlsx/.pdf/.json those don't catch.
+# Glob, not a fixed list: each client drop arrives as a new reference<N>/ folder
+# full of real scans, and a hand-maintained list silently misses the next one.
+reference*/
+reference/
+reference2/
+reference3/
+TIMEKEEPING/
+benchmark/
+*.jpg
+*.jpeg
+*.png
+*.csv
+
+# Secrets
+.env
+
+# Local-only tooling and docs
+.git
+.gitignore
+docker-compose.yml
+deploy.sh
+*.md
+__pycache__/
+*.pyc

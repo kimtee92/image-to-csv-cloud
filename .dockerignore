@@ -1,0 +1,23 @@
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+*.md
+docker-compose.yml
+
+# Client timesheet scans and real employee data — must never be baked into a
+# deployed image. Named explicitly rather than relying only on extension rules
+# below: TIMEKEEPING/ and benchmark/ also hold .xlsx/.pdf/.json that those
+# extension rules don't catch.
+# Glob, not a fixed list: each client drop arrives as a new reference<N>/ folder
+# full of real scans, and a hand-maintained list silently misses the next one.
+reference*
+reference/
+reference2/
+reference3/
+TIMEKEEPING/
+benchmark/
+*.jpg
+*.jpeg
+*.csv

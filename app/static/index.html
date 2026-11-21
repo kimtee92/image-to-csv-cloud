@@ -1,0 +1,2620 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image → CSV</title>
+  <!-- Light/Dark Mode Browser Bar (dynamic) -->
+  <meta name="theme-color" id="theme-color-meta" content="#0e1220">
+  <!-- iOS Web App Fallbacks -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <script>
+  (function(){
+    var t = localStorage.getItem('theme');
+    if(!t) t = window.matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    
+    // Sync browser bar color
+    var meta = document.getElementById('theme-color-meta');
+    if (meta) meta.setAttribute('content', t === 'dark' ? '#0e1220' : '#edf0f7');
+  })();
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+  tailwind.config = {
+    darkMode: ['selector', '[data-theme="dark"]'],
+    theme: { extend: {
+      colors: {
+        aero: { 50:'#e8f4f8', 100:'#d0eaf4', 200:'#a0d6ea', 300:'#48cae4', 400:'#00b4d8', 500:'#0077b6', 600:'#005a8d', 700:'#023e58', 800:'#0c1a33', 900:'#080f1e' },
+        mint: { 400:'#72efdd', 500:'#06d6a0' },
+      }
+    }}
+  };
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/codedgar/Puppertino@latest/dist/css/newfull.css">
+  <style>
+    /* ═══ Puppertino-Inspired Theme — Image to CSV ═══ */
+    :root, [data-theme="light"] {
+      --aero-bg-solid: #edf0f7;
+      --aero-bg: linear-gradient(145deg, #edf0f7 0%, #f4f6fb 45%, #e8edf8 100%);
+      --aero-surface: rgba(255,255,255,0.68);
+      --aero-surface-solid: #ffffff;
+      --aero-glass-border: rgba(151,163,203,0.33);
+      --aero-glass-shadow: 0 18px 40px rgba(64,76,113,0.16);
+      --aero-primary: #3f63ff;
+      --aero-primary-rgb: 63,99,255;
+      --aero-secondary: #4f84ff;
+      --aero-accent: #2fb27a;
+      --aero-text: #1d2440;
+      --aero-text2: #4a5685;
+      --aero-text3: #7b86ad;
+      --aero-input-bg: rgba(255,255,255,0.86);
+      --aero-input-border: rgba(134,149,201,0.34);
+      color-scheme: light;
+    }
+    [data-theme="dark"] {
+      --aero-bg-solid: #0e1220;
+      --aero-bg: linear-gradient(145deg, #0e1220 0%, #141a2e 45%, #1b2340 100%);
+      --aero-surface: rgba(28,36,64,0.72);
+      --aero-surface-solid: #202846;
+      --aero-glass-border: rgba(146,163,224,0.22);
+      --aero-glass-shadow: 0 18px 44px rgba(0,0,0,0.45);
+      --aero-primary: #7e98ff;
+      --aero-primary-rgb: 126,152,255;
+      --aero-secondary: #5f84ff;
+      --aero-accent: #58c995;
+      --aero-text: #edf2ff;
+      --aero-text2: #b6c2ea;
+      --aero-text3: #8f9cca;
+      --aero-input-bg: rgba(18,24,43,0.8);
+      --aero-input-border: rgba(146,163,224,0.28);
+      color-scheme: dark;
+    }
+    /* Solid theme color on <html>: iOS browser bars sample the page
+       background (Chrome iOS ignores theme-color meta); also shows
+       through overscroll rubber-banding. */
+    html {
+      background: var(--aero-bg-solid);
+      transition: background 0.4s;
+      height: 100%;
+      overflow: hidden;
+    }
+    /* The document never scrolls (Safari then paints its bars from the
+       fixed html background); content scrolls inside <body> instead. */
+    body {
+      background: none !important;
+      color: var(--aero-text);
+      transition: color 0.3s;
+      margin: 0;
+      height: 100vh;
+      height: 100dvh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: none;
+    }
+    /* Viewport-sized, non-scrolling gradient (background-attachment:
+       fixed is broken on iOS, so use a fixed layer instead). */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background: var(--aero-bg);
+      transition: background 0.4s;
+    }
+
+    /* Drag-over highlight */
+    .drop-active { border-color: var(--aero-primary) !important; background: rgba(var(--aero-primary-rgb),0.06) !important; }
+
+    /* Arithmetic-verification cell states.
+       Amber = the printed total disagrees with (time out - time in), so a digit in
+       this group is probably misread and a human should look.
+       Green  = the value was re-read from the image and now matches the total. */
+    #data-table td.cell-flagged {
+      background: rgba(255,176,32,0.20);
+      box-shadow: inset 0 0 0 2px rgba(214,138,0,0.65);
+    }
+    [data-theme="dark"] #data-table td.cell-flagged {
+      background: rgba(255,176,32,0.16);
+      box-shadow: inset 0 0 0 2px rgba(255,183,77,0.6);
+    }
+    #data-table td.cell-corrected {
+      background: rgba(6,214,160,0.14);
+      box-shadow: inset 0 0 0 1px rgba(6,160,120,0.5);
+    }
+    [data-theme="dark"] #data-table td.cell-corrected {
+      background: rgba(6,214,160,0.12);
+      box-shadow: inset 0 0 0 1px rgba(88,201,149,0.5);
+    }
+
+    /* Editable cell styling */
+    td[contenteditable="true"]:focus {
+      outline: 2px solid var(--aero-primary);
+      outline-offset: -2px;
+      background: rgba(var(--aero-primary-rgb),0.06);
+    }
+    th[contenteditable="true"]:focus {
+      outline: 2px solid var(--aero-primary);
+      outline-offset: -2px;
+      background: rgba(var(--aero-primary-rgb),0.08);
+    }
+
+    /* Row hover */
+    #data-table tbody tr:hover { background: rgba(var(--aero-primary-rgb),0.04); }
+
+    /* Spinner */
+    .spinner {
+      border: 4px solid rgba(var(--aero-primary-rgb),0.15);
+      border-top: 4px solid var(--aero-primary);
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Smooth transitions */
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Image viewer: zoom + pan */
+    #image-viewer {
+      position: relative;
+      overflow: hidden;
+      cursor: grab;
+      background: var(--aero-surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--aero-glass-border);
+      min-height: 240px;
+      height: 38vh;
+      max-height: 45vh;
+    }
+    #image-viewer.grabbing { cursor: grabbing; }
+    #image-viewer img {
+      transform-origin: 0 0;
+      will-change: transform;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .zoom-controls {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      display: flex;
+      gap: 4px;
+      z-index: 10;
+    }
+    .zoom-controls button {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      border: 1px solid var(--aero-glass-border);
+      background: var(--aero-surface);
+      backdrop-filter: blur(8px);
+      color: var(--aero-text);
+      font-size: 14px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .zoom-controls button:hover { background: var(--aero-surface-solid); border-color: var(--aero-primary); }
+    .field-active {
+      outline: 2px solid var(--aero-primary) !important;
+      outline-offset: -1px;
+      background: rgba(var(--aero-primary-rgb),0.06) !important;
+    }
+
+    /* Glass card */
+    .glass-card {
+      background: var(--aero-surface);
+      backdrop-filter: blur(16px) saturate(1.4);
+      -webkit-backdrop-filter: blur(16px) saturate(1.4);
+      border: 1px solid var(--aero-glass-border);
+      box-shadow: var(--aero-glass-shadow);
+    }
+
+    /* Theme toggle */
+    .theme-toggle {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--aero-glass-border);
+      background: var(--aero-surface);
+      backdrop-filter: blur(12px);
+      color: var(--aero-primary);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .theme-toggle:hover {
+      border-color: var(--aero-primary);
+      transform: scale(1.08);
+    }
+
+    /* ── Dark-theme Tailwind color overrides ─────────────────────────── */
+    [data-theme="dark"] .text-gray-300 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-400 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-500 { color: var(--aero-text3); }
+    [data-theme="dark"] .text-gray-600 { color: var(--aero-text2); }
+    [data-theme="dark"] .text-gray-700 { color: var(--aero-text); }
+    [data-theme="dark"] .text-gray-800 { color: var(--aero-text); }
+    [data-theme="dark"] .bg-white      { background-color: var(--aero-surface); }
+    [data-theme="dark"] .bg-gray-100   { background-color: var(--aero-surface); }
+    [data-theme="dark"] .bg-gray-50    { background-color: var(--aero-surface); }
+    [data-theme="dark"] .border-gray-50  { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-100 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-200 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .border-gray-300 { border-color: var(--aero-glass-border); }
+    [data-theme="dark"] .hover\:bg-gray-50:hover  { background-color: var(--aero-hover); }
+    [data-theme="dark"] .hover\:text-gray-600:hover { color: var(--aero-text2); }
+    [data-theme="dark"] .focus\:bg-gray-100:focus  { background-color: var(--aero-hover); }
+    [data-theme="dark"] .focus\:bg-indigo-50:focus { background-color: rgba(var(--aero-primary-rgb), 0.1); }
+    [data-theme="dark"] .border-indigo-300   { border-color: var(--aero-primary); }
+    [data-theme="dark"] .border-indigo-400   { border-color: var(--aero-primary); }
+    [data-theme="dark"] .text-indigo-600     { color: var(--aero-primary); }
+    [data-theme="dark"] .hover\:bg-indigo-50:hover { background-color: rgba(var(--aero-primary-rgb), 0.1); }
+    [data-theme="dark"] .focus\:ring-indigo-400 { --tw-ring-color: var(--aero-primary); }
+    [data-theme="dark"] .bg-green-100  { background-color: rgba(6,214,160,0.15); }
+    [data-theme="dark"] .text-green-700 { color: #72efdd; }
+    [data-theme="dark"] .text-red-400  { color: #f87171; }
+    [data-theme="dark"] .hover\:text-red-500:hover  { color: #f87171; }
+    [data-theme="dark"] .hover\:text-red-600:hover  { color: #ef4444; }
+    [data-theme="dark"] .hover\:text-orange-400:hover { color: #fb923c; }
+    [data-theme="dark"] .hover\:border-red-300:hover { border-color: rgba(248,113,113,0.4); }
+    [data-theme="dark"] .bg-red-100  { background-color: rgba(239,71,111,0.12); }
+    [data-theme="dark"] .text-red-700 { color: #f87171; }
+  </style>
+</head>
+<body class="min-h-screen">
+
+  <!-- Header -->
+  <header class="glass-card border-b" style="border-color: var(--aero-glass-border);">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, var(--aero-primary), var(--aero-secondary));">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold" style="color: var(--aero-text);">Image → CSV</h1>
+          <p class="text-xs" style="color: var(--aero-text3);">Powered by Google Gemini</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="theme-toggle" id="csv-theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+          <svg id="csv-icon-moon" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          <svg id="csv-icon-sun" width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        </button>
+        <div id="status-badge" class="text-xs px-3 py-1 rounded-full" style="background:rgba(var(--aero-primary-rgb),0.08);color:var(--aero-text3);">Checking model…</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8">
+
+    <!-- Upload Area -->
+    <section id="upload-section">
+      <div id="drop-zone"
+           class="border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer
+                  glass-card transition-all duration-200"
+           style="border-color: var(--aero-input-border);">
+        <input type="file" id="file-input" accept="image/*,application/pdf,.pdf" multiple class="hidden" />
+        <div class="flex flex-col items-center gap-4">
+          <div class="w-16 h-16 rounded-full flex items-center justify-center" style="background:rgba(var(--aero-primary-rgb),0.1);">
+            <svg class="w-8 h-8" style="color:var(--aero-primary)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div>
+            <p class="text-lg font-semibold" style="color:var(--aero-text);">Drop your files here</p>
+            <p class="text-sm mt-1" style="color:var(--aero-text3);">or click to browse - PNG, JPG, WEBP, PDF up to 20 MB each - multiple files supported</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selected files list (before processing) -->
+      <div id="selected-preview" class="hidden mt-4 rounded-xl p-4 glass-card">
+        <div class="flex items-center justify-between mb-3">
+          <p id="selected-count" class="text-sm font-medium" style="color:var(--aero-text);"></p>
+          <button onclick="clearSelectedFiles()" class="text-xs px-3 py-1.5 rounded-lg transition hover:text-red-500" style="border:1px solid var(--aero-glass-border);color:var(--aero-text3);background:var(--aero-surface);">
+            Clear all
+          </button>
+        </div>
+        <div id="selected-files-list" class="grid grid-cols-1 md:grid-cols-2 gap-2"></div>
+        <p class="text-xs mt-3" style="color:var(--aero-text3);">Fill in options below then click Extract. Each file is processed separately and becomes its own CSV.</p>
+      </div>
+
+      <!-- Client -->
+      <div id="client-row" class="mt-6">
+        <label for="client-select" class="block text-sm font-medium mb-2" style="color:var(--aero-text);">Client</label>
+        <div class="flex flex-wrap items-center gap-3">
+          <select id="client-select" onchange="setClient(this.value)"
+                  class="rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 min-w-[16rem]"
+                  style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);--tw-ring-color:var(--aero-primary);">
+          </select>
+          <span id="client-layout-note" class="text-xs" style="color:var(--aero-text3);"></span>
+        </div>
+        <p class="text-xs mt-2" style="color:var(--aero-text3);">
+          The client determines both how their DTRs are read (their form's fixed column set)
+          and which timekeeping workbook the batch is compiled into.
+          Pick <strong>Other / auto-detect</strong> for a form that isn't one of these.
+        </p>
+      </div>
+
+      <!-- Additional options -->
+      <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Prompt field -->
+        <div>
+          <label for="prompt-input" class="block text-sm font-medium mb-1" style="color:var(--aero-text);">Additional Instructions (optional)</label>
+          <textarea id="prompt-input" rows="3"
+                    class="w-full rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:border-transparent"
+                    style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);--tw-ring-color:var(--aero-primary);"
+                    placeholder="e.g. &quot;Include the employee name and period from the header&quot; or &quot;Use 24-hour time format&quot;"></textarea>
+        </div>
+
+      <!-- Extract button -->
+      <div class="mt-6 flex justify-center">
+        <button id="extract-btn" onclick="startExtraction()" disabled
+                class="px-8 py-3 text-white rounded-xl text-sm font-semibold
+                       transition flex items-center gap-2
+                       disabled:opacity-40 disabled:cursor-not-allowed"
+                style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 16px rgba(var(--aero-primary-rgb),0.25);">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          <span id="extract-btn-label">Extract Table</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Loading State -->
+    <section id="loading-section" class="hidden">
+      <div class="flex flex-col items-center gap-4 py-16">
+        <div class="spinner"></div>
+        <p id="loading-title" class="font-medium" style="color:var(--aero-text2);">Extracting table from file...</p>
+        <p id="loading-subtitle" class="text-sm" style="color:var(--aero-text3);">This may take a few seconds</p>
+      </div>
+    </section>
+
+    <!-- Error State -->
+    <section id="error-section" class="hidden fade-in">
+      <div class="rounded-xl p-6 text-center glass-card" style="border:1px solid rgba(239,71,111,0.25);">
+        <p class="font-medium" style="color:var(--aero-text);" id="error-message"></p>
+        <button onclick="resetApp()" class="mt-4 px-4 py-2 text-white rounded-lg transition text-sm" style="background:linear-gradient(135deg,#ef476f,#f87171);">
+          Try Again
+        </button>
+      </div>
+    </section>
+
+    <!-- Results Area -->
+    <section id="results-section" class="hidden fade-in">
+
+      <!-- Batch overview: all processed files -->
+      <div id="batch-panel" class="hidden mb-6 rounded-xl p-4 glass-card">
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-3">
+          <div>
+            <h2 class="text-lg font-bold" style="color:var(--aero-text);">Processed Files <span id="batch-count" class="text-sm font-medium" style="color:var(--aero-text3);"></span></h2>
+            <p id="batch-progress" class="text-xs mt-0.5" style="color:var(--aero-text3);"></p>
+            <p id="batch-shown" class="text-xs mt-0.5" style="color:var(--aero-text3);"></p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <label for="batch-page-size" class="text-xs" style="color:var(--aero-text3);" title="Display only — every uploaded file is processed regardless of this setting">Rows per page</label>
+            <select id="batch-page-size" onchange="setBatchPageSize(this.value)"
+                    class="text-xs rounded-lg px-2 py-1.5 focus:outline-none"
+                    style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);">
+              <option value="3">3</option>
+              <option value="5" selected>5</option>
+              <option value="10">10</option>
+              <option value="20">20</option>
+            </select>
+            <button id="download-all-btn" onclick="downloadAllResults()" disabled
+                    class="text-xs px-3 py-1.5 text-white rounded-lg font-medium transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                    style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              Download All
+            </button>
+            <button id="download-xlsx-btn" onclick="downloadDtrWorkbook()" disabled
+                    class="text-xs px-3 py-1.5 text-white rounded-lg font-medium transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                    style="background:linear-gradient(135deg,#1d7044,#2f9e63);"
+                    title="Compile every DTR in this batch into one timekeeping workbook (Sheet1 + DTR Summary)">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-6h6v6M4 6h16M6 6v13a1 1 0 001 1h10a1 1 0 001-1V6"/></svg>
+              <span id="download-xlsx-label">Excel (batch)</span>
+            </button>
+            <button onclick="resetApp()" class="text-xs px-3 py-1.5 rounded-lg font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">
+              New Batch
+            </button>
+          </div>
+        </div>
+        <div id="batch-list" class="grid grid-cols-1 gap-2"></div>
+        <div id="batch-pagination" class="mt-3 flex items-center justify-center gap-1 flex-wrap"></div>
+      </div>
+
+      <!-- Editor for the currently opened file -->
+      <div id="editor-panel">
+
+      <!-- Image Preview (sticky) -->
+      <div id="preview-panel" class="mb-6 sticky top-4 z-10">
+        <div class="rounded-xl p-2 glass-card">
+          <div id="image-viewer" class="rounded-lg">
+            <img id="image-preview" draggable="false" />
+            <div class="zoom-controls">
+              <button onclick="rotatePreview(-90)" title="Rotate left (applies to the whole batch)">↺</button>
+              <button onclick="rotatePreview(90)" title="Rotate right (applies to the whole batch)">↻</button>
+              <button onclick="imgViewerZoom(1.25)" title="Zoom in">+</button>
+              <button onclick="imgViewerZoom(0.8)" title="Zoom out">−</button>
+              <button onclick="imgViewerReset()" title="Fit to view">⊡</button>
+            </div>
+          </div>
+          <p class="text-xs mt-1 text-center truncate" style="color:var(--aero-text3);">
+            <span id="rotation-label" class="mr-1" style="color:var(--aero-primary);"></span>
+            <span id="image-name"></span>
+          </p>
+        </div>
+      </div>
+
+      <div id="table-results">
+      <!-- Arithmetic verification summary -->
+      <div id="verify-banner" class="hidden mb-4 rounded-xl p-3 text-sm"></div>
+
+      <!-- Table Info + Controls (not sticky) -->
+      <div class="mb-6">
+        <div class="flex items-center gap-2 mb-1">
+          <h2 class="text-lg font-bold" style="color:var(--aero-text);">Extracted Table</h2>
+          <span id="llm-badge" class="hidden text-xs px-2 py-0.5 rounded-full font-medium"></span>
+        </div>
+        <p class="text-sm mb-3" style="color:var(--aero-text3);">Click any cell to edit. Use the buttons to add/remove rows and columns.</p>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="downloadCSV()" class="px-6 py-2 text-white rounded-lg text-sm font-medium transition flex items-center gap-2" style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));box-shadow:0 4px 12px rgba(var(--aero-primary-rgb),0.2);">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Download CSV
+          </button>
+          <button onclick="resetApp()" class="px-4 py-2 rounded-lg text-sm font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">
+            New Batch
+          </button>
+        </div>
+      </div>
+
+      <!-- Non-table text ABOVE -->
+      <div id="text-above-section" class="mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-600 flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+            Header Fields
+          </h3>
+          <button onclick="addField('above')" class="text-xs px-2 py-1 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add Field
+          </button>
+        </div>
+        <div id="text-above-fields" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <p class="text-xs text-gray-400 col-span-2 py-1">No header fields detected. Click "Add Field" to add one.</p>
+        </div>
+      </div>
+
+      <!-- Editable Table -->
+      <!-- Consolidate toolbar -->
+      <div class="flex items-center gap-2 mb-2 flex-wrap">
+        <span class="text-xs text-gray-400">Consolidate repeating cells:</span>
+        <span class="flex items-center gap-1">
+          <label class="text-xs text-gray-400" for="consolidate-col">Col</label>
+          <input id="consolidate-col" type="number" min="1" value="1"
+            class="w-12 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            title="Column number to consolidate vertically (1-indexed)" />
+          <button onclick="consolidate('vertical')" class="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition flex items-center gap-1" title="Clear repeating values going down in the selected column">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            Vertical
+          </button>
+        </span>
+        <span class="flex items-center gap-1">
+          <label class="text-xs text-gray-400" for="consolidate-row">Row</label>
+          <input id="consolidate-row" type="number" min="1"
+            class="w-12 text-xs border border-gray-200 rounded px-1 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            placeholder="last"
+            title="Row number to consolidate horizontally (1-indexed, blank = last row)" />
+          <button onclick="consolidate('horizontal')" class="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition flex items-center gap-1" title="Clear repeating values going right in the selected row">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+            Horizontal
+          </button>
+        </span>
+      </div>
+      <div class="flex flex-wrap gap-2 mb-2">
+        <button onclick="addRow()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Add Row
+        </button>
+        <button onclick="addColumn()" class="px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition flex items-center gap-1">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          Add Column
+        </button>
+      </div>
+      <div class="rounded-xl overflow-x-auto glass-card">
+        <table id="data-table" class="w-full text-sm" style="color:var(--aero-text);">
+          <thead id="table-head" style="background:rgba(var(--aero-primary-rgb),0.04);border-bottom:1px solid var(--aero-glass-border);"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Non-table text BELOW -->
+      <div id="text-below-section" class="mt-4">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-600 flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            Footer Fields
+          </h3>
+          <button onclick="addField('below')" class="text-xs px-2 py-1 rounded-lg border border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Add Field
+          </button>
+        </div>
+        <div id="text-below-fields" class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          <p class="text-xs text-gray-400 col-span-2 py-1">No footer fields detected. Click "Add Field" to add one.</p>
+        </div>
+      </div>
+
+      <!-- AI amendment chat (text + voice) -->
+      <div id="amend-chat-section" class="mt-4 rounded-xl p-3 glass-card">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <h3 class="text-sm font-semibold" style="color:var(--aero-text);">AI Amendments</h3>
+          <span id="amend-voice-status" class="hidden text-[11px] px-2 py-0.5 rounded-full" style="background:rgba(var(--aero-primary-rgb),0.12);color:var(--aero-primary);">Listening...</span>
+        </div>
+        <div id="amend-working-indicator" class="hidden mb-2 text-xs px-2 py-1 rounded-lg flex items-center gap-2" style="background:rgba(var(--aero-primary-rgb),0.12);color:var(--aero-primary);border:1px solid var(--aero-glass-border);">
+          <span class="inline-block w-2 h-2 rounded-full animate-pulse" style="background:var(--aero-primary);"></span>
+          <span>AI is applying your requested changes...</span>
+        </div>
+        <p class="text-xs mb-2" style="color:var(--aero-text3);">Type or speak what to change (values, rows, columns, or field layout), then apply.</p>
+        <div id="amend-chat-log" class="max-h-48 overflow-y-auto rounded-lg p-2 mb-2" style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);"></div>
+        <div class="flex items-end gap-2">
+          <button id="amend-mic-btn" onclick="toggleAmendVoice()" class="px-3 py-2 rounded-lg text-sm font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);" title="Voice to text">
+            Mic
+          </button>
+          <textarea id="amend-input" rows="2" class="flex-1 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:border-transparent" style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);--tw-ring-color:var(--aero-primary);" placeholder="e.g. Move both signature fields to footer and rename Evening In to Night In"></textarea>
+          <button id="amend-undo-btn" onclick="undoLastAmendment()" class="px-4 py-2 rounded-lg text-sm font-semibold transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);" disabled>Undo</button>
+          <button id="amend-send-btn" onclick="sendAmendment()" class="px-4 py-2 text-white rounded-lg text-sm font-semibold transition" style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));">Apply</button>
+        </div>
+      </div>
+
+      <!-- Raw output toggle -->
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Show raw OCR output</summary>
+        <pre id="raw-output" class="mt-2 bg-gray-100 rounded-lg p-4 text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap"></pre>
+      </details>
+      <details id="llm-debug-section" class="mt-2 hidden">
+        <summary class="cursor-pointer text-sm text-gray-400 hover:text-gray-600">Show LLM raw output</summary>
+        <pre id="llm-raw-output" class="mt-2 bg-gray-100 rounded-lg p-4 text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap"></pre>
+      </details>
+      </div>
+
+      </div>
+      </div><!-- /editor-panel -->
+    </section>
+  </main>
+
+  <script>
+    // ── Theme toggle ────────────────────────────────────────────────────
+    function toggleTheme() {
+      var cur = document.documentElement.getAttribute('data-theme') || 'light';
+      var next = cur === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      updateThemeIcon(next);
+      
+      // Sync browser bar color on toggle
+      var meta = document.getElementById('theme-color-meta');
+      if (meta) meta.setAttribute('content', next === 'dark' ? '#0e1220' : '#edf0f7');
+    }
+    function updateThemeIcon(t) {
+      var moon = document.getElementById('csv-icon-moon');
+      var sun = document.getElementById('csv-icon-sun');
+      if (moon && sun) { moon.style.display = t === 'dark' ? 'none' : 'block'; sun.style.display = t === 'light' ? 'none' : 'block'; }
+    }
+    updateThemeIcon(document.documentElement.getAttribute('data-theme') || 'light');
+    window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change', function(e) {
+      if (!localStorage.getItem('theme')) {
+        var t = e.matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+        updateThemeIcon(t);
+        
+        // Sync browser bar color on OS change
+        var meta = document.getElementById('theme-color-meta');
+        if (meta) meta.setAttribute('content', t === 'dark' ? '#0e1220' : '#edf0f7');
+      }
+    });
+
+    // ── State ──────────────────────────────────────────────────────────────
+    let currentHeaders = [];
+    let currentRows = [];
+    let headerFields = [];  // [{label, value}, ...]
+    let footerFields = [];
+    let selectedFiles = [];      // File[] staged for extraction
+    let batchResults = [];       // per-file extraction results
+    let activeResultIndex = -1;  // which batch result is open in the editor
+    let batchPage = 0;
+    let batchPageSize = 5;
+    let batchPrompt = '';        // prompt/template captured at extraction time (for retries)
+    let batchRotation = 0;       // preview rotation for files EXIF didn't straighten
+    let batchRotationResolved = false;  // detection runs once per batch
+    // Defaults to DTR: this tool is pointed mainly at Daily Time Records, and the
+    // DTR path is the one that pins the column schema and validates the times.
+    // Auto, deliberately. Forcing one form's pinned header list onto another
+    // form's scans mangles them — a DTR-mode run over break-detail timesheets
+    // came back with MORNING IN columns and 70+ bogus review flags per page.
+    // The selected client drives both the input layout and the output workbook.
+    // documentType stays as the low-level knob the backend understands.
+    let documentType = 'auto';
+    let selectedClient = '';
+    let clientCatalogue = [];
+    let ocrRawText = '';     // raw OCR text for field search
+    let currentFlagged = [];      // cells that failed the arithmetic check
+    let currentCorrections = [];  // cells the verification pass repaired
+    let amendMessages = [];
+    let amendHistory = [];
+    let amendRecognition = null;
+    let amendListening = false;
+
+    // ── Image viewer state ────────────────────────────────────────────────
+    let ivScale = 1, ivX = 0, ivY = 0;
+    let ivDragging = false, ivStartX = 0, ivStartY = 0, ivOrigX = 0, ivOrigY = 0;
+    let ivAutoFit = true;  // false once the user zooms/pans, so we stop re-fitting
+
+    // ── DOM refs ───────────────────────────────────────────────────────────
+    const dropZone         = document.getElementById('drop-zone');
+    const fileInput        = document.getElementById('file-input');
+    const promptInput      = document.getElementById('prompt-input');
+    const extractBtn       = document.getElementById('extract-btn');
+    const extractBtnLabel  = document.getElementById('extract-btn-label');
+    const clientRow        = document.getElementById('client-row');
+    const clientSelect     = document.getElementById('client-select');
+    const clientLayoutNote = document.getElementById('client-layout-note');
+    const selectedPreview  = document.getElementById('selected-preview');
+    const selectedCount    = document.getElementById('selected-count');
+    const selectedFilesList = document.getElementById('selected-files-list');
+    const batchPanel       = document.getElementById('batch-panel');
+    const batchCount       = document.getElementById('batch-count');
+    const batchProgress    = document.getElementById('batch-progress');
+    const batchList        = document.getElementById('batch-list');
+    const batchPagination  = document.getElementById('batch-pagination');
+    const downloadAllBtn   = document.getElementById('download-all-btn');
+    const downloadXlsxBtn  = document.getElementById('download-xlsx-btn');
+    const editorPanel      = document.getElementById('editor-panel');
+    const uploadSection    = document.getElementById('upload-section');
+    const loadingSection   = document.getElementById('loading-section');
+    const errorSection     = document.getElementById('error-section');
+    const resultsSection   = document.getElementById('results-section');
+    const errorMessage     = document.getElementById('error-message');
+    const imagePreview     = document.getElementById('image-preview');
+    const imageName        = document.getElementById('image-name');
+    const tableHead        = document.getElementById('table-head');
+    const tableBody        = document.getElementById('table-body');
+    const rawOutput        = document.getElementById('raw-output');
+    const llmBadge         = document.getElementById('llm-badge');
+    const llmDebugSection  = document.getElementById('llm-debug-section');
+    const llmRawOutput     = document.getElementById('llm-raw-output');
+    const loadingTitle     = document.getElementById('loading-title');
+    const loadingSubtitle  = document.getElementById('loading-subtitle');
+    const statusBadge      = document.getElementById('status-badge');
+    const previewPanel     = document.getElementById('preview-panel');
+    const tableResults     = document.getElementById('table-results');
+    const textAboveSection = document.getElementById('text-above-section');
+    const textAboveFields  = document.getElementById('text-above-fields');
+    const textBelowSection = document.getElementById('text-below-section');
+    const textBelowFields  = document.getElementById('text-below-fields');
+    const imageViewer      = document.getElementById('image-viewer');
+    const amendInput       = document.getElementById('amend-input');
+    const amendSendBtn     = document.getElementById('amend-send-btn');
+    const amendUndoBtn     = document.getElementById('amend-undo-btn');
+    const amendMicBtn      = document.getElementById('amend-mic-btn');
+    const amendChatLog     = document.getElementById('amend-chat-log');
+    const amendWorkingIndicator = document.getElementById('amend-working-indicator');
+    const amendVoiceStatus = document.getElementById('amend-voice-status');
+
+    // ── Image viewer: zoom & pan ──────────────────────────────────────────
+    function ivApply() {
+      imagePreview.style.transform = `translate(${ivX}px, ${ivY}px) scale(${ivScale})`;
+    }
+    function imgViewerZoom(factor, cx, cy) {
+      ivAutoFit = false;
+      const rect = imageViewer.getBoundingClientRect();
+      if (cx === undefined) { cx = rect.width / 2; cy = rect.height / 2; }
+      const newScale = Math.min(Math.max(ivScale * factor, 0.2), 20);
+      const ratio = newScale / ivScale;
+      ivX = cx - ratio * (cx - ivX);
+      ivY = cy - ratio * (cy - ivY);
+      ivScale = newScale;
+      ivApply();
+    }
+    function imgViewerReset() {
+      ivAutoFit = true;
+      return ivFit();
+    }
+
+    function ivFit() {
+      const W = imageViewer.offsetWidth;
+      const H = imageViewer.offsetHeight;
+      const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
+      if (!iw || !W || !H) return false;
+      const scale = Math.min(W / iw, H / ih, 1);
+      ivScale = scale;
+      ivX = (W - iw * scale) / 2;
+      ivY = (H - ih * scale) / 2;
+      ivApply();
+      return true;
+    }
+
+    // The viewer is min-height:240px until its 38vh height applies, so an early fit
+    // locks in a scale that's less than half the right size. Re-fit whenever the
+    // viewer's box changes, unless the user has zoomed or panned themselves.
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => { if (ivAutoFit) ivFit(); }).observe(imageViewer);
+    }
+    imageViewer.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const rect = imageViewer.getBoundingClientRect();
+      const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+      imgViewerZoom(e.deltaY < 0 ? 1.15 : 0.87, cx, cy);
+    }, { passive: false });
+    imageViewer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      ivAutoFit = false;
+      ivDragging = true; ivStartX = e.clientX; ivStartY = e.clientY;
+      ivOrigX = ivX; ivOrigY = ivY;
+      imageViewer.classList.add('grabbing');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!ivDragging) return;
+      ivX = ivOrigX + (e.clientX - ivStartX);
+      ivY = ivOrigY + (e.clientY - ivStartY);
+      ivApply();
+    });
+    window.addEventListener('mouseup', () => {
+      ivDragging = false;
+      imageViewer.classList.remove('grabbing');
+    });
+    // Touch support
+    let ivTouchDist = 0;
+    imageViewer.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        ivAutoFit = false;
+        ivDragging = true; ivStartX = e.touches[0].clientX; ivStartY = e.touches[0].clientY;
+        ivOrigX = ivX; ivOrigY = ivY;
+      } else if (e.touches.length === 2) {
+        ivDragging = false;
+        ivTouchDist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+      }
+    }, { passive: true });
+    imageViewer.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (e.touches.length === 1 && ivDragging) {
+        ivX = ivOrigX + (e.touches[0].clientX - ivStartX);
+        ivY = ivOrigY + (e.touches[0].clientY - ivStartY);
+        ivApply();
+      } else if (e.touches.length === 2) {
+        const d = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+        const rect = imageViewer.getBoundingClientRect();
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        imgViewerZoom(d / ivTouchDist, cx, cy);
+        ivTouchDist = d;
+      }
+    }, { passive: false });
+    imageViewer.addEventListener('touchend', () => { ivDragging = false; });
+    imagePreview.addEventListener('load', () => imgViewerReset());
+
+
+    function isPdfFile(file) {
+      if (!file) return false;
+      return file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    }
+
+    function isSupportedUpload(file) {
+      if (!file) return false;
+      return file.type.startsWith('image/') || isPdfFile(file);
+    }
+
+
+    async function loadClients() {
+      try {
+        const resp = await fetch('/api/clients');
+        const data = await resp.json();
+        clientCatalogue = data.clients || [];
+        selectedClient = data.default || (clientCatalogue[0] || {}).key || '';
+        clientSelect.innerHTML = clientCatalogue.map(c =>
+          `<option value="${c.key}">${c.label}${c.has_workbook ? '' : '  (no workbook yet)'}</option>`
+        ).join('');
+        clientSelect.value = selectedClient;
+        updateClientNote();
+      } catch (e) {
+        clientSelect.innerHTML = '<option value="">Other / auto-detect</option>';
+      }
+    }
+
+    function setClient(key) {
+      selectedClient = key || '';
+      updateClientNote();
+    }
+
+    function updateClientNote() {
+      const c = clientCatalogue.find(x => x.key === selectedClient);
+      if (!c || !clientLayoutNote) return;
+      clientLayoutNote.textContent = c.columns
+        ? `${c.layout_label} · ${c.columns} fixed columns · ` +
+          (c.has_workbook ? 'fills their timekeeping workbook' : 'CSV export only')
+        : 'form detected automatically';
+    }
+
+    // The tool is DTR-only now, so there is no table/text switch to honour.
+    // Kept as the single hook that refreshes mode-dependent chrome.
+    function updateConversionModeUI() {
+      updateClientNote();
+    }
+    updateConversionModeUI();
+    loadClients();
+
+    if (amendInput) {
+      amendInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendAmendment();
+        }
+      });
+    }
+
+    function renderAmendChat() {
+      if (!amendChatLog) return;
+      if (!amendMessages.length) {
+        amendChatLog.innerHTML = '<p class="text-xs" style="color:var(--aero-text3);">No amendments yet.</p>';
+        return;
+      }
+      amendChatLog.innerHTML = amendMessages.map((msg) => {
+        const isUser = msg.role === 'user';
+        const bg = isUser ? 'rgba(var(--aero-primary-rgb),0.14)' : 'var(--aero-surface)';
+        const align = isUser ? 'ml-6' : 'mr-6';
+        const roleColor = isUser ? 'var(--aero-primary)' : 'var(--aero-text3)';
+        const textColor = 'var(--aero-text)';
+        return `<div class="${align} mb-2 rounded-lg px-2 py-1.5" style="background:${bg};border:1px solid var(--aero-glass-border);">
+          <div class="text-[11px] mb-0.5" style="color:${roleColor};">${isUser ? 'You' : 'AI'}</div>
+          <div class="text-xs whitespace-pre-wrap" style="color:${textColor};">${escapeHtml(msg.content || '')}</div>
+        </div>`;
+      }).join('');
+      amendChatLog.scrollTop = amendChatLog.scrollHeight;
+    }
+
+    function setAmendBusy(busy) {
+      if (!amendSendBtn || !amendInput) return;
+      amendSendBtn.disabled = busy;
+      amendInput.disabled = busy;
+      amendSendBtn.textContent = busy ? 'Applying...' : 'Apply';
+      if (amendWorkingIndicator) {
+        amendWorkingIndicator.classList.toggle('hidden', !busy);
+      }
+      updateUndoButtonState(busy);
+    }
+
+    function updateUndoButtonState(isBusy = false) {
+      if (!amendUndoBtn) return;
+      const canUndo = amendHistory.length > 0 && !isBusy;
+      amendUndoBtn.disabled = !canUndo;
+      amendUndoBtn.style.opacity = canUndo ? '1' : '0.5';
+      amendUndoBtn.style.cursor = canUndo ? 'pointer' : 'not-allowed';
+    }
+
+    function snapshotAmendState() {
+      return {
+        headers: JSON.parse(JSON.stringify(currentHeaders || [])),
+        rows: JSON.parse(JSON.stringify(currentRows || [])),
+        headerFields: JSON.parse(JSON.stringify(headerFields || [])),
+        footerFields: JSON.parse(JSON.stringify(footerFields || [])),
+        flagged: JSON.parse(JSON.stringify(currentFlagged || [])),
+        corrections: JSON.parse(JSON.stringify(currentCorrections || [])),
+      };
+    }
+
+    function pushAmendHistory(state) {
+      amendHistory.push(state);
+      if (amendHistory.length > 20) amendHistory.shift();
+      updateUndoButtonState();
+    }
+
+    function undoLastAmendment() {
+      if (!amendHistory.length) return;
+      const prev = amendHistory.pop();
+      currentHeaders = prev.headers || ['Column 1'];
+      currentRows = Array.isArray(prev.rows) ? prev.rows : [];
+      headerFields = Array.isArray(prev.headerFields) ? prev.headerFields : [];
+      footerFields = Array.isArray(prev.footerFields) ? prev.footerFields : [];
+      currentFlagged = Array.isArray(prev.flagged) ? prev.flagged : [];
+      currentCorrections = Array.isArray(prev.corrections) ? prev.corrections : [];
+
+      renderTable();
+      renderNonTableFields();
+      saveEditorState();
+      renderBatchList();
+
+      amendMessages.push({ role: 'assistant', content: 'Undid last amendment.' });
+      renderAmendChat();
+      updateUndoButtonState();
+    }
+
+    function updateVoiceIndicator() {
+      if (!amendVoiceStatus || !amendMicBtn) return;
+      amendVoiceStatus.classList.toggle('hidden', !amendListening);
+      amendMicBtn.style.color = amendListening ? 'var(--aero-primary)' : 'var(--aero-text2)';
+      amendMicBtn.style.borderColor = amendListening ? 'var(--aero-primary)' : 'var(--aero-glass-border)';
+    }
+
+    function initAmendVoice() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return null;
+      const rec = new SpeechRecognition();
+      rec.lang = 'en-US';
+      rec.continuous = false;
+      rec.interimResults = true;
+
+      rec.onstart = () => {
+        amendListening = true;
+        updateVoiceIndicator();
+      };
+      rec.onend = () => {
+        amendListening = false;
+        updateVoiceIndicator();
+      };
+      rec.onerror = () => {
+        amendListening = false;
+        updateVoiceIndicator();
+      };
+      rec.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          transcript += event.results[i][0].transcript;
+        }
+        if (!transcript.trim()) return;
+        amendInput.value = amendInput.value
+          ? (amendInput.value.trimEnd() + ' ' + transcript.trim())
+          : transcript.trim();
+      };
+      return rec;
+    }
+
+    function toggleAmendVoice() {
+      if (!amendRecognition) {
+        amendRecognition = initAmendVoice();
+      }
+      if (!amendRecognition) {
+        alert('Voice recognition is not supported in this browser.');
+        return;
+      }
+      try {
+        if (amendListening) amendRecognition.stop();
+        else amendRecognition.start();
+      } catch (_) {
+        // Browsers can throw if recognition is restarted too quickly.
+      }
+    }
+
+    function normalizeAmendResponse(data) {
+      const headers = Array.isArray(data?.headers)
+        ? data.headers.map(h => toCellText(h).trim()).filter(Boolean)
+        : [];
+      const safeHeaders = headers.length ? headers : ['Column 1'];
+      const normalized = normalizeHeadersRows(safeHeaders, data?.rows || []);
+      const width = Math.max(1, normalized.headers.length || safeHeaders.length);
+      const rows = normalized.rows.map((r) => {
+        const row = (Array.isArray(r) ? r : [r]).map(c => toCellText(c));
+        while (row.length < width) row.push('');
+        return row.slice(0, width);
+      });
+
+      const asFields = (items) => Array.isArray(items)
+        ? items.map((item) => {
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              return { label: toCellText(item.label).trim(), value: toCellText(item.value) };
+            }
+            if (Array.isArray(item)) {
+              return { label: toCellText(item[0]).trim(), value: toCellText(item[1]) };
+            }
+            return { label: '', value: '' };
+          }).filter(f => f.label || f.value)
+        : [];
+
+      return {
+        headers: normalized.headers.length ? normalized.headers : safeHeaders,
+        rows,
+        headerFields: asFields(data?.header_fields),
+        footerFields: asFields(data?.footer_fields),
+        assistantMessage: toCellText(data?.assistant_message || 'Amendment applied.').trim() || 'Amendment applied.',
+      };
+    }
+
+    async function sendAmendment() {
+      const instruction = (amendInput?.value || '').trim();
+      if (!instruction) return;
+
+      document.activeElement?.blur();
+      const previousState = snapshotAmendState();
+      amendMessages.push({ role: 'user', content: instruction });
+      renderAmendChat();
+      setAmendBusy(true);
+
+      try {
+        const response = await fetch('/api/amend', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instruction,
+            headers: currentHeaders,
+            rows: currentRows,
+            header_fields: headerFields,
+            footer_fields: footerFields,
+            ocr_context: ocrRawText,
+          }),
+        });
+
+        if (!response.ok) {
+          let msg = `Amendment failed (${response.status})`;
+          try {
+            const err = await response.json();
+            msg = err.detail || msg;
+          } catch (_) {
+            // Ignore JSON parse issues for non-JSON error responses.
+          }
+          throw new Error(msg);
+        }
+
+        const data = await response.json();
+        const normalized = normalizeAmendResponse(data);
+
+        currentHeaders = normalized.headers;
+        currentRows = normalized.rows;
+        headerFields = normalized.headerFields;
+        footerFields = normalized.footerFields;
+        // An amendment can restructure rows/columns arbitrarily, so previous cell
+        // markers can no longer be trusted to point at the right cells.
+        currentFlagged = [];
+        currentCorrections = [];
+        pushAmendHistory(previousState);
+
+        renderTable();
+        renderNonTableFields();
+        saveEditorState();
+        renderBatchList();
+
+        amendMessages.push({ role: 'assistant', content: normalized.assistantMessage });
+        amendInput.value = '';
+      } catch (err) {
+        amendMessages.push({ role: 'assistant', content: `Error: ${err.message}` });
+      } finally {
+        renderAmendChat();
+        setAmendBusy(false);
+      }
+    }
+
+    // ── Health check (single check on load only) ──────────────────────────
+    async function checkHealth() {
+      try {
+        const r = await fetch('/api/health');
+        const d = await r.json();
+        if (d.model_ready) {
+          statusBadge.textContent = 'Model ready';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+          statusBadge.style.cssText = 'background:rgba(6,214,160,0.12);color:var(--aero-accent);';
+        } else {
+          statusBadge.textContent = 'Model loading…';
+          statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+          statusBadge.style.cssText = 'background:rgba(255,209,102,0.12);color:var(--aero-text2);';
+        }
+      } catch {
+        statusBadge.textContent = 'Backend offline';
+        statusBadge.className = 'text-xs px-3 py-1 rounded-full';
+        statusBadge.style.cssText = 'background:rgba(239,71,111,0.12);color:var(--aero-text2);';
+      }
+    }
+    checkHealth();
+
+    // ── File handling (staged: select multiple → configure → extract) ───
+    const PDF_THUMB = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect x="12" y="8" width="72" height="80" rx="10" fill="%23f3f6ff" stroke="%233f63ff" stroke-width="4"/><text x="48" y="57" text-anchor="middle" font-size="26" font-family="Arial" fill="%233f63ff">PDF</text></svg>';
+
+    // Object URL per File, created lazily and revoked on reset.
+    const fileThumbUrls = new Map();
+    function fileThumb(file) {
+      if (isPdfFile(file)) return PDF_THUMB;
+      if (!fileThumbUrls.has(file)) fileThumbUrls.set(file, URL.createObjectURL(file));
+      return fileThumbUrls.get(file);
+    }
+    function revokeAllThumbs() {
+      fileThumbUrls.forEach(url => URL.revokeObjectURL(url));
+      fileThumbUrls.clear();
+      rotatedUrls.forEach(url => URL.revokeObjectURL(url));
+      rotatedUrls.clear();
+    }
+
+    // ── Preview rotation ────────────────────────────────────────────────
+    // Most scans carry no EXIF orientation tag, so the browser shows their raw
+    // sideways pixels. Rotate into a canvas rather than with a CSS transform: that
+    // keeps naturalWidth/Height honest, so the zoom, pan and fit-to-view maths all
+    // keep working untouched.
+    const rotatedUrls = new Map();
+
+    // An upload usually mixes scans carrying an EXIF orientation tag (the browser has
+    // already straightened those) with scans that don't (stored pixels sideways).
+    // Only the latter need turning, so a single correction can safely propagate to
+    // the rest of the batch without tipping the already-upright ones over.
+    function effectiveRotation(r) {
+      if (!r) return 0;
+      if (r.rotation !== null && r.rotation !== undefined) return r.rotation;
+      return r.exifRotated ? 0 : (batchRotation || 0);
+    }
+
+    function rotatedImageUrl(file, angle) {
+      const base = fileThumb(file);
+      if (!angle) return Promise.resolve(base);
+      const key = base + '@' + angle;
+      if (rotatedUrls.has(key)) return Promise.resolve(rotatedUrls.get(key));
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const swap = angle === 90 || angle === 270;
+          const canvas = document.createElement('canvas');
+          canvas.width = swap ? img.naturalHeight : img.naturalWidth;
+          canvas.height = swap ? img.naturalWidth : img.naturalHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate(angle * Math.PI / 180);
+          ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+          canvas.toBlob((blob) => {
+            if (!blob) { resolve(base); return; }
+            const url = URL.createObjectURL(blob);
+            rotatedUrls.set(key, url);
+            resolve(url);
+          }, 'image/png');
+        };
+        img.onerror = () => resolve(base);
+        img.src = base;
+      });
+    }
+
+    async function applyPreviewImage(r) {
+      const url = await rotatedImageUrl(r.file, effectiveRotation(r));
+      if (batchResults[activeResultIndex] === r) {
+        imagePreview.src = url;
+        updateRotationLabel();
+      }
+    }
+
+    // Work out which way up this batch's scans belong — once, not per file. Scans in
+    // one upload come off the same scanner the same way round, and the detector
+    // compares the two candidate rotations in a single call, so a 98-file batch costs
+    // one request rather than 98.
+    async function ensureBatchRotation() {
+      if (batchRotationResolved) return;
+      const target = batchResults.find(r =>
+        r.status === 'done' && !r.isPdf && !r.exifRotated);
+      if (!target) return;      // nothing sideways to correct
+      batchRotationResolved = true;   // set before awaiting, so we only ever ask once
+      try {
+        const form = new FormData();
+        form.append('file', target.file);
+        const resp = await fetch('/api/detect-orientation', { method: 'POST', body: form });
+        if (!resp.ok) return;
+        const d = await resp.json();
+        if (![90, 180, 270].includes(d.rotation_angle)) return;
+        batchRotation = d.rotation_angle;
+        const open = batchResults[activeResultIndex];
+        if (open) applyPreviewImage(open);
+        renderBatchList();
+      } catch (_) {
+        // Detection is a convenience — the rotate buttons still work without it.
+      }
+    }
+
+    function rotatePreview(delta) {
+      const r = batchResults[activeResultIndex];
+      if (!r) return;
+      const next = (((effectiveRotation(r) + delta) % 360) + 360) % 360;
+      r.rotation = next;
+      // Scans in one upload come off the same scanner the same way round, so carry
+      // this to the other files the browser hasn't already straightened — one
+      // correction covers the whole batch instead of ninety-odd clicks.
+      if (!r.exifRotated) batchRotation = next;
+      applyPreviewImage(r);
+      renderBatchList();
+    }
+
+    function updateRotationLabel() {
+      const el = document.getElementById('rotation-label');
+      if (!el) return;
+      const angle = effectiveRotation(batchResults[activeResultIndex]);
+      el.textContent = angle ? `${angle}°` : '';
+    }
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      selectFiles(e.target.files);
+      fileInput.value = ''; // allow re-selecting the same file(s)
+    });
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drop-active'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drop-active'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drop-active');
+      selectFiles(e.dataTransfer.files);
+    });
+
+    // Also support paste (can carry multiple images)
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files = [];
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          const f = item.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length) selectFiles(files);
+    });
+
+    function selectFiles(fileList) {
+      const incoming = Array.from(fileList || []);
+      if (!incoming.length) return;
+      const accepted = incoming.filter(isSupportedUpload);
+      if (!accepted.length) {
+        errorMessage.textContent = 'Only image or PDF files are supported.';
+        showSection('error');
+        return;
+      }
+      accepted.forEach(f => selectedFiles.push(f));
+      renderSelectedFiles();
+    }
+
+    function renderSelectedFiles() {
+      if (!selectedFiles.length) {
+        selectedFilesList.innerHTML = '';
+        selectedPreview.classList.add('hidden');
+        extractBtn.disabled = true;
+        return;
+      }
+      selectedCount.textContent = selectedFiles.length + (selectedFiles.length === 1 ? ' file selected' : ' files selected');
+      selectedFilesList.innerHTML = selectedFiles.map((f, i) =>
+        `<div class="flex items-center gap-3 rounded-lg px-2 py-1.5" style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);">
+          <img src="${fileThumb(f)}" class="w-12 h-12 object-contain rounded-md shrink-0" style="border:1px solid var(--aero-glass-border);background:var(--aero-surface);" />
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium truncate" style="color:var(--aero-text);">${escapeHtml(f.name)}</p>
+            <p class="text-xs" style="color:var(--aero-text3);">${(f.size / 1024).toFixed(0)} KB</p>
+          </div>
+          <button onclick="removeSelectedFile(${i})" class="text-gray-400 hover:text-red-500 transition shrink-0" title="Remove file">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>`
+      ).join('');
+      selectedPreview.classList.remove('hidden');
+      extractBtn.disabled = false;
+    }
+
+    function removeSelectedFile(idx) {
+      const [removed] = selectedFiles.splice(idx, 1);
+      if (removed && fileThumbUrls.has(removed)) {
+        URL.revokeObjectURL(fileThumbUrls.get(removed));
+        fileThumbUrls.delete(removed);
+      }
+      renderSelectedFiles();
+    }
+
+    function clearSelectedFiles() {
+      selectedFiles = [];
+      fileInput.value = '';
+      renderSelectedFiles();
+    }
+
+    async function startExtraction() {
+      if (!selectedFiles.length) return;
+      const files = selectedFiles.slice();
+
+      amendMessages = [];
+      amendHistory = [];
+      renderAmendChat();
+      updateUndoButtonState();
+
+      batchPrompt = promptInput.value || '';
+      batchRotation = 0;
+      batchRotationResolved = false;
+
+      // A multi-page PDF is one job per page. Several clients submit a whole pay
+      // period as a single PDF (7 pages, one employee each); treating it as one
+      // file silently delivered the first employee and dropped the rest.
+      const expanded = [];
+      for (const f of files) {
+        let pages = 1;
+        if (isPdfFile(f)) {
+          try {
+            const fd = new FormData();
+            fd.append('file', f);
+            const resp = await fetch('/api/pdf-info', { method: 'POST', body: fd });
+            if (resp.ok) pages = Math.max(1, (await resp.json()).pages || 1);
+          } catch (e) { /* unreadable page count: fall back to a single page */ }
+        }
+        for (let i = 0; i < pages; i++) expanded.push({ file: f, page: i, pages });
+      }
+
+      batchResults = expanded.map(({ file: f, page, pages }) => ({
+        file: f,
+        page: page,
+        fileName: pages > 1 ? `${f.name} — p${page + 1}/${pages}` : f.name,
+        isPdf: isPdfFile(f),
+        // Pinned per file so toggling the selector mid-batch can't process one
+        // half of a run under different rules from the other.
+        documentType: documentType,
+        client: selectedClient,
+        status: 'pending',   // pending | processing | done | error
+        error: '',
+        headers: [], rows: [],
+        headerFields: [], footerFields: [],
+        raw: '', llmRaw: '', llmApplied: false,
+        text: '',
+        flagged: [], corrections: [],
+        attempts: 0,
+        rotation: null,      // null = follow the batch rotation
+        missingRows: [],
+        rereadForRows: null,
+        exifRotated: false,  // true when EXIF already turned it upright
+      }));
+      activeResultIndex = -1;
+      batchPage = 0;
+
+      // Clear the staging list - files now live in batchResults
+      selectedFiles = [];
+      fileInput.value = '';
+      renderSelectedFiles();
+
+      editorPanel.classList.add('hidden');
+      showSection('results');
+      renderBatchList();
+
+      // Process with limited concurrency
+      const CONCURRENCY = 3;
+      let next = 0;
+      const worker = async () => {
+        while (next < batchResults.length) {
+          const i = next++;
+          await processResult(i);
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, batchResults.length) }, worker)
+      );
+      ensureBatchRotation();
+      renderBatchList();
+    }
+
+    async function processResult(i) {
+      const r = batchResults[i];
+      r.status = 'processing';
+      r.error = '';
+      renderBatchList();
+
+      const form = new FormData();
+      form.append('file', r.file);
+      form.append('prompt', batchPrompt);
+      form.append('document_type', r.documentType || documentType);
+      form.append('client', r.client || selectedClient || '');
+      form.append('page', String(r.page || 0));
+
+      try {
+        const resp = await fetch('/api/ocr', { method: 'POST', body: form });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          const e = new Error(err.detail || 'OCR failed');
+          e.rateLimited = resp.status === 429;
+          e.retryAfter = parseInt(resp.headers.get('Retry-After') || '', 10) || 0;
+          throw e;
+        }
+        const data = await resp.json();
+
+        let payload = data;
+        let table = normalizeTablePayload(payload);
+        // An extraction that yields no rows is a failure, not a success — reporting
+        // it as "done" hides a totally empty CSV in the middle of a large batch.
+        if (!table.rows.length) {
+          throw new Error('No table rows were extracted from this file');
+        }
+
+        // The backend can prove a day is missing: a gap in the date column, or the
+        // table stopping short of the period printed on the form. Re-reading
+        // usually returns the full set, so try once more and keep whichever
+        // attempt is the more complete of the two.
+        const missing = payload.missing_rows || [];
+        if (missing.length && !r.rereadForRows) {
+          r.rereadForRows = { payload, table, missing };
+          renderBatchList();
+          await new Promise(res => setTimeout(res, 800));
+          return processResult(i);
+        }
+        if (r.rereadForRows && r.rereadForRows.missing.length <= missing.length) {
+          payload = r.rereadForRows.payload;   // the re-read was no better
+          table = r.rereadForRows.table;
+        }
+        r.rereadForRows = null;
+        r.missingRows = payload.missing_rows || [];
+
+        r.headers = table.headers;
+        r.rows = table.rows;
+        r.raw = payload.raw || '';
+        r.llmRaw = payload.llm_raw || '';
+        r.llmApplied = !!payload.llm_applied;
+        r.exifRotated = !!payload.exif_rotated;
+        // Arithmetic-verification results, remapped onto the displayed grid
+        r.flagged = remapCellMarkers(payload.flagged_cells, table.rowMap, table.colMap);
+        r.corrections = remapCellMarkers(payload.time_corrections, table.rowMap, table.colMap);
+
+        const ocrTextLines = payload.ocr_text_lines || [];    // lines before the table
+        const ocrFooterLines = payload.ocr_footer_lines || []; // lines after the table
+        const hasHeaderTemplate = (payload.template_header_fields || []).length > 0;
+        const hasFooterTemplate = (payload.template_footer_fields || []).length > 0;
+        r.headerFields = buildFields(
+          payload.template_header_fields || [],
+          hasHeaderTemplate ? ocrTextLines.concat(ocrFooterLines) : ocrTextLines
+        );
+        r.footerFields = buildFields(
+          payload.template_footer_fields || [],
+          hasFooterTemplate ? ocrTextLines.concat(ocrFooterLines) : ocrFooterLines
+        );
+        
+        r.status = 'done';
+        r.error = '';
+      } catch (err) {
+        // Empty results and transient API errors are both usually fixed by asking
+        // again, so retry automatically rather than making the user hunt for the
+        // one bad file in a large batch.
+        //
+        // A rate limit is a different animal from a blip: the project's Gemini
+        // quota is simply behind the batch, and 1.2s later it will still be
+        // behind. Those get more attempts and an exponential back-off, otherwise a
+        // large batch loses files purely for being large.
+        r.attempts = (r.attempts || 0) + 1;
+        const limited = !!err.rateLimited;
+        const maxAttempts = limited ? 5 : 2;
+        if (r.attempts < maxAttempts) {
+          const backoff = limited
+            ? Math.max(err.retryAfter * 1000, 3000 * Math.pow(2, r.attempts - 1))
+            : 1200;
+          r.retryNote = limited
+            ? `rate limited — retrying in ${Math.round(backoff / 1000)}s`
+            : '';
+          renderBatchList();
+          await new Promise(res => setTimeout(res, backoff));
+          r.retryNote = '';
+          return processResult(i);
+        }
+        r.status = 'error';
+        r.error = err.message || 'Extraction failed';
+      }
+
+      renderBatchList();
+      // Auto-open the first successfully processed file in the editor
+      if (r.status === 'done' && activeResultIndex === -1) {
+        openResult(i);
+      }
+    }
+
+    function retryResult(i) {
+      const r = batchResults[i];
+      if (!r || r.status === 'processing') return;
+      r.attempts = 0;  // manual retry gets a fresh automatic-retry budget
+      processResult(i);
+    }
+
+    // ── Row-count outlier detection ─────────────────────────────────────
+    // Batches are normally many copies of the same form, so the row count should be
+    // identical across files. A file that comes back with one row fewer has silently
+    // dropped a day — invisible unless we compare it against the rest of the batch.
+    function batchRowCountNorm() {
+      const counts = new Map();
+      batchResults.forEach(r => {
+        if (r.status === 'done' && r.rows.length) {
+          counts.set(r.rows.length, (counts.get(r.rows.length) || 0) + 1);
+        }
+      });
+      let modal = null, modalN = 0, total = 0;
+      counts.forEach((n, rows) => {
+        total += n;
+        if (n > modalN) { modalN = n; modal = rows; }
+      });
+      // Only meaningful when the batch is big enough and mostly uniform; a mixed bag
+      // of different form types would otherwise flag everything.
+      const uniform = total >= 4 && modalN / total >= 0.6;
+      return { modal, modalN, total, uniform };
+    }
+
+    function rowCountOutlier(r) {
+      if (r.status !== 'done') return null;
+      const norm = batchRowCountNorm();
+      if (!norm.uniform || norm.modal === null) return null;
+      if (r.rows.length === norm.modal) return null;
+      return { got: r.rows.length, expected: norm.modal };
+    }
+
+    // ── Batch overview rendering ────────────────────────────────────────
+    function setBatchPageSize(value) {
+      batchPageSize = parseInt(value) || 5;
+      batchPage = 0;
+      renderBatchList();
+    }
+
+    function setBatchPage(page) {
+      const totalPages = Math.max(1, Math.ceil(batchResults.length / batchPageSize));
+      batchPage = Math.max(0, Math.min(page, totalPages - 1));
+      renderBatchList();
+    }
+
+    function batchStatusBadge(r) {
+      if (r.status === 'pending')
+        return '<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0" style="background:var(--aero-surface);color:var(--aero-text3);border:1px solid var(--aero-glass-border);">Queued</span>';
+      if (r.status === 'processing')
+        return '<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0 animate-pulse" style="background:rgba(var(--aero-primary-rgb),0.12);color:var(--aero-primary);">Processing…</span>';
+      if (r.status === 'error')
+        return '<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0" style="background:rgba(239,71,111,0.12);color:#ef476f;">Failed</span>';
+      return '<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0" style="background:rgba(6,214,160,0.12);color:var(--aero-accent);">Done</span>';
+    }
+
+    function batchCardHtml(r, i) {
+      const active = i === activeResultIndex;
+      const thumb = r.isPdf ? PDF_THUMB : fileThumb(r.file);
+
+      let previewHtml = '';
+      if (r.status === 'done') {
+        const maxCols = 5, maxRows = 3;
+        const hs = r.headers.slice(0, maxCols);
+        const moreCols = r.headers.length > maxCols;
+        const previewRows = r.rows.slice(0, maxRows);
+        previewHtml = '<div class="mt-1 overflow-x-auto"><table class="text-[11px]" style="color:var(--aero-text2);">'
+          + '<tr>' + hs.map(h => `<th class="pr-3 pb-0.5 text-left font-semibold whitespace-nowrap" style="color:var(--aero-text);">${escapeHtml(h)}</th>`).join('') + (moreCols ? '<th style="color:var(--aero-text3);">…</th>' : '') + '</tr>'
+          + previewRows.map(row =>
+              '<tr>' + row.slice(0, maxCols).map(c => `<td class="pr-3 whitespace-nowrap">${escapeHtml(c)}</td>`).join('') + (moreCols ? '<td>…</td>' : '') + '</tr>'
+            ).join('')
+          + (r.rows.length > maxRows ? `<tr><td colspan="${hs.length + (moreCols ? 1 : 0)}" style="color:var(--aero-text3);">… ${r.rows.length - maxRows} more row(s)</td></tr>` : '')
+          + '</table></div>';
+        
+      } else if (r.status === 'error') {
+        previewHtml = `<p class="text-xs mt-1" style="color:#ef476f;">${escapeHtml(r.error || 'Extraction failed')}</p>`;
+      }
+
+      const stats = (r.status === 'done')
+        ? `<span class="text-[11px] shrink-0" style="color:var(--aero-text3);">${r.rows.length} rows × ${r.headers.length} cols</span>`
+        : '';
+
+      // Surface verification results on the card so problem files stand out in a big batch
+      let verifyBadges = '';
+      if (r.status === 'done') {
+        const nFlag = (r.flagged || []).length;
+        const nFix = (r.corrections || []).length;
+        if (nFix) {
+          verifyBadges += `<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0" style="background:rgba(6,214,160,0.14);color:var(--aero-accent);" title="Cells re-read from the image and corrected to match the printed totals">${nFix} auto-fixed</span>`;
+        }
+        if (nFlag) {
+          verifyBadges += `<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0 font-semibold" style="background:rgba(255,176,32,0.18);color:#d68a00;" title="The printed TOTAL disagrees with Time out - Time in for these cells">⚠ ${nFlag} to review</span>`;
+        }
+        // A proven missing day outranks the batch-shape heuristic, so show it instead.
+        const missingRows = r.missingRows || [];
+        if (missingRows.length) {
+          const list = missingRows.slice(0, 3).join('; ') + (missingRows.length > 3 ? '…' : '');
+          verifyBadges += `<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0 font-semibold" style="background:rgba(239,71,111,0.16);color:#ef476f;" title="These days are on the form's period but missing from the table, even after re-reading. Add them by hand: ${escapeHtml(missingRows.join('; '))}">⚠ missing ${missingRows.length} day${missingRows.length === 1 ? '' : 's'}: ${escapeHtml(list)}</span>`;
+        } else {
+          const outlier = rowCountOutlier(r);
+          if (outlier) {
+            verifyBadges += `<span class="text-[11px] px-2 py-0.5 rounded-full shrink-0 font-semibold" style="background:rgba(239,71,111,0.16);color:#ef476f;" title="Every other file in this batch produced ${outlier.expected} rows. A row may have been missed or duplicated — check against the image.">⚠ ${outlier.got} rows, batch has ${outlier.expected}</span>`;
+          }
+        }
+      }
+
+      const actions = [];
+      if (r.status === 'done') {
+        actions.push(`<button onclick="openResult(${i})" class="text-xs px-3 py-1.5 rounded-lg text-white font-medium transition" style="background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));">${active ? 'Currently editing' : 'View / Edit'}</button>`);
+        actions.push(`<button onclick="downloadResult(${i})" class="text-xs px-3 py-1.5 rounded-lg font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">${'Download CSV'}</button>`);
+      } else if (r.status === 'error') {
+        actions.push(`<button onclick="retryResult(${i})" class="text-xs px-3 py-1.5 rounded-lg font-medium transition" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">Retry</button>`);
+      }
+
+      return `<div class="rounded-lg p-3 flex gap-3" style="background:var(--aero-input-bg);border:1px solid ${active ? 'var(--aero-primary)' : 'var(--aero-input-border)'};">
+        <img src="${thumb}" class="w-14 h-14 object-contain rounded-md shrink-0" style="border:1px solid var(--aero-glass-border);background:var(--aero-surface);" />
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <p class="text-sm font-medium truncate" style="color:var(--aero-text);max-width:16rem;">${escapeHtml(r.fileName)}</p>
+            ${batchStatusBadge(r)}
+            ${stats}
+            ${verifyBadges}
+          </div>
+          ${previewHtml}
+          ${actions.length ? `<div class="flex gap-2 mt-2 flex-wrap">${actions.join('')}</div>` : ''}
+        </div>
+      </div>`;
+    }
+
+    function renderBatchList() {
+      if (!batchResults.length) {
+        batchPanel.classList.add('hidden');
+        return;
+      }
+      batchPanel.classList.remove('hidden');
+      batchCount.textContent = `(${batchResults.length})`;
+
+      const finished = batchResults.filter(r => r.status === 'done' || r.status === 'error').length;
+      const doneCount = batchResults.filter(r => r.status === 'done').length;
+      const failCount = batchResults.filter(r => r.status === 'error').length;
+      if (finished < batchResults.length) {
+        batchProgress.textContent = `Processing… ${finished} of ${batchResults.length} finished`;
+      } else {
+        const needReview = batchResults.filter(r => (r.flagged || []).length).length;
+        const autoFixed = batchResults.reduce((n, r) => n + (r.corrections || []).length, 0);
+        const outliers = batchResults.filter(r => rowCountOutlier(r)).length;
+        const missingDays = batchResults.filter(r => (r.missingRows || []).length).length;
+        let msg = `All ${batchResults.length} files processed — ${doneCount} succeeded${failCount ? `, ${failCount} failed` : ''}.`;
+        if (autoFixed) msg += ` ${autoFixed} cell${autoFixed === 1 ? '' : 's'} auto-corrected.`;
+        if (missingDays) msg += ` ⚠ ${missingDays} file${missingDays === 1 ? ' is' : 's are'} missing a day.`;
+        if (outliers) msg += ` ⚠ ${outliers} file${outliers === 1 ? ' has' : 's have'} an unexpected row count.`;
+        msg += needReview
+          ? ` ⚠ ${needReview} file${needReview === 1 ? '' : 's'} have cells that need review.`
+          : (outliers ? '' : ' Click a file to view and edit it.');
+        batchProgress.textContent = msg;
+      }
+
+      downloadAllBtn.disabled = doneCount === 0;
+      if (downloadXlsxBtn) downloadXlsxBtn.disabled = doneCount === 0;
+
+      const totalPages = Math.max(1, Math.ceil(batchResults.length / batchPageSize));
+      if (batchPage >= totalPages) batchPage = totalPages - 1;
+      const start = batchPage * batchPageSize;
+      const pageItems = batchResults.slice(start, start + batchPageSize);
+      batchList.innerHTML = pageItems.map((r, idx) => batchCardHtml(r, start + idx)).join('');
+
+      // Spell out that paging only affects what's displayed — the page size has been
+      // misread as a cap on how many files get processed.
+      const shownLabel = document.getElementById('batch-shown');
+      if (shownLabel) {
+        shownLabel.textContent = batchResults.length > pageItems.length
+          ? `Showing ${start + 1}–${start + pageItems.length} of ${batchResults.length} — all ${batchResults.length} are processed`
+          : '';
+      }
+
+      if (totalPages <= 1) {
+        batchPagination.innerHTML = '';
+      } else {
+        const btnStyle = 'background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);';
+        const activeStyle = 'background:linear-gradient(135deg,var(--aero-primary),var(--aero-secondary));color:#fff;border:1px solid transparent;';
+        let html = `<button onclick="setBatchPage(${batchPage - 1})" ${batchPage === 0 ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed" style="${btnStyle}">Prev</button>`;
+        for (let p = 0; p < totalPages; p++) {
+          html += `<button onclick="setBatchPage(${p})" class="text-xs px-2.5 py-1 rounded-lg" style="${p === batchPage ? activeStyle : btnStyle}">${p + 1}</button>`;
+        }
+        html += `<button onclick="setBatchPage(${batchPage + 1})" ${batchPage === totalPages - 1 ? 'disabled' : ''} class="text-xs px-2.5 py-1 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed" style="${btnStyle}">Next</button>`;
+        batchPagination.innerHTML = html;
+      }
+    }
+
+    // ── Open a batch result in the editor ───────────────────────────────
+    function saveEditorState() {
+      document.activeElement?.blur();
+      const r = batchResults[activeResultIndex];
+      if (!r || r.status !== 'done') return;
+      r.headers = currentHeaders;
+      r.rows = currentRows;
+      r.headerFields = headerFields;
+      r.footerFields = footerFields;
+      r.flagged = currentFlagged;
+      r.corrections = currentCorrections;
+      
+    }
+
+    function openResult(i) {
+      const r = batchResults[i];
+      if (!r || r.status !== 'done') return;
+      saveEditorState();
+      activeResultIndex = i;
+
+      amendMessages = [];
+      amendHistory = [];
+      renderAmendChat();
+      updateUndoButtonState();
+
+      editorPanel.classList.remove('hidden');
+      imageName.textContent = r.fileName;
+      ensureBatchRotation();
+
+      currentHeaders = r.headers;
+      currentRows = r.rows;
+      headerFields = r.headerFields;
+      footerFields = r.footerFields;
+      currentFlagged = r.flagged || [];
+      currentCorrections = r.corrections || [];
+      ocrRawText = r.raw;
+      rawOutput.textContent = r.raw;
+
+      // LLM applied badge
+      if (r.llmApplied) {
+        llmBadge.textContent = '✓ LLM processed';
+        llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium';
+        llmBadge.style.cssText = 'background:rgba(6,214,160,0.12);color:var(--aero-accent);';
+      } else {
+        llmBadge.textContent = 'OCR only';
+        llmBadge.className = 'text-xs px-2 py-0.5 rounded-full font-medium';
+        llmBadge.style.cssText = 'background:var(--aero-surface);color:var(--aero-text3);';
+      }
+      llmBadge.classList.remove('hidden');
+
+      // LLM debug output
+      if (r.llmRaw) {
+        llmRawOutput.textContent = r.llmRaw;
+        llmDebugSection.classList.remove('hidden');
+      } else {
+        llmDebugSection.classList.add('hidden');
+      }
+
+      tableResults.classList.remove('hidden');
+
+      if (!r.isPdf) {
+        previewPanel.classList.remove('hidden');
+        applyPreviewImage(r);
+        // Reset viewer after the panel is visible (load event fires too early while hidden)
+        requestAnimationFrame(() => imgViewerReset());
+      } else {
+        previewPanel.classList.add('hidden');
+        imagePreview.removeAttribute('src');
+      }
+
+      renderTable();
+      renderNonTableFields();
+      
+      renderBatchList();
+    }
+
+    // ── Table payload normalization & recovery ─────────────────────────
+    function toCellText(value) {
+      if (value === null || value === undefined) return '';
+      return typeof value === 'string' ? value : String(value);
+    }
+
+    function normalizeHeadersRows(headersInput, rowsInput) {
+      let headers = Array.isArray(headersInput)
+        ? headersInput.map(h => toCellText(h).trim())
+        : [];
+      let rows = [];
+
+      if (Array.isArray(rowsInput)) {
+        if (rowsInput.every(r => Array.isArray(r))) {
+          rows = rowsInput.map(r => r.map(c => toCellText(c)));
+        } else if (rowsInput.every(r => r && typeof r === 'object' && !Array.isArray(r))) {
+          if (!headers.length) {
+            const keySet = new Set();
+            rowsInput.forEach(obj => Object.keys(obj).forEach(k => keySet.add(k)));
+            headers = Array.from(keySet);
+          }
+          rows = rowsInput.map(obj => headers.map(h => toCellText(obj[h])));
+        } else {
+          rows = rowsInput.map(r => Array.isArray(r) ? r.map(c => toCellText(c)) : [toCellText(r)]);
+        }
+      }
+
+      if (!headers.length && rows.length && rows[0].length > 1) {
+        headers = rows[0].map((_, i) => 'Column ' + (i + 1));
+      }
+
+      return { headers, rows };
+    }
+
+    function isLikelyFallbackContentTable(headers, rows) {
+      if (headers.length !== 1 || rows.length < 2) return false;
+      const h = (headers[0] || '').trim().toLowerCase();
+      if (!['content', 'column 1', 'column1'].includes(h)) return false;
+      const sample = rows.slice(0, 8).map(r => toCellText(r[0])).join(' ');
+      return /\{|"reasoning"|"full_text"|"headers"|"rows"/i.test(sample);
+    }
+
+    function extractJsonCandidate(text) {
+      if (typeof text !== 'string' || !text.trim()) return '';
+      const cleaned = text
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/```json/gi, '')
+        .replace(/```/g, '')
+        .trim();
+      const start = cleaned.indexOf('{');
+      const end = cleaned.lastIndexOf('}');
+      if (start === -1 || end === -1 || end <= start) return '';
+      return cleaned.slice(start, end + 1);
+    }
+
+    function parseLooseJsonObject(text) {
+      const candidate = extractJsonCandidate(text);
+      if (!candidate) return null;
+
+      const variants = [
+        candidate,
+        // Tolerate trailing commas from model output.
+        candidate.replace(/,\s*([}\]])/g, '$1'),
+      ];
+
+      for (const variant of variants) {
+        try {
+          const parsed = JSON.parse(variant);
+          if (parsed && typeof parsed === 'object') return parsed;
+        } catch (_) {
+          // Ignore and continue trying fallbacks.
+        }
+      }
+      return null;
+    }
+
+    function parseMarkdownPipeTable(text) {
+      if (typeof text !== 'string' || !text.trim()) return null;
+      const lines = text.split(/\r?\n/).map(l => l.trim());
+
+      let best = [];
+      let block = [];
+      lines.forEach(line => {
+        if (line.includes('|')) {
+          block.push(line);
+        } else {
+          if (block.length > best.length) best = block;
+          block = [];
+        }
+      });
+      if (block.length > best.length) best = block;
+      if (best.length < 2) return null;
+
+      const parsed = best
+        .map(line => {
+          const cells = line.split('|').map(c => c.trim());
+          if (cells[0] === '') cells.shift();
+          if (cells[cells.length - 1] === '') cells.pop();
+          return cells;
+        })
+        .filter(row => row.length > 0);
+
+      if (parsed.length < 2) return null;
+
+      const headers = parsed[0].map(c => toCellText(c));
+      const rows = parsed.slice(1).filter(row => !row.every(cell => /^:?-{3,}:?$/.test(cell)));
+      if (!headers.length) return null;
+
+      return normalizeHeadersRows(headers, rows);
+    }
+
+    function recoverTableFromRaw(data) {
+      const candidates = [data?.llm_raw, data?.raw];
+
+      for (const candidate of candidates) {
+        const parsedObj = parseLooseJsonObject(candidate);
+        if (parsedObj) {
+          const nestedTable = parsedObj.table && typeof parsedObj.table === 'object' ? parsedObj.table : null;
+          const source = nestedTable || parsedObj;
+          const normalized = normalizeHeadersRows(source.headers, source.rows);
+          if (normalized.headers.length && normalized.rows.length) {
+            return normalized;
+          }
+
+          const tableFromText = parseMarkdownPipeTable(
+            toCellText(parsedObj.full_text || parsedObj.text || parsedObj.markdown_table || '')
+          );
+          if (tableFromText && tableFromText.headers.length && tableFromText.rows.length) {
+            return tableFromText;
+          }
+        }
+
+        const directTable = parseMarkdownPipeTable(candidate);
+        if (directTable && directTable.headers.length && directTable.rows.length) {
+          return directTable;
+        }
+      }
+
+      return null;
+    }
+
+    function normalizeTablePayload(data) {
+      const normalized = normalizeHeadersRows(data?.headers, data?.rows);
+      let headers = normalized.headers;
+      let rows = normalized.rows;
+
+      const shouldRecover =
+        !headers.length ||
+        !rows.length ||
+        isLikelyFallbackContentTable(headers, rows);
+
+      if (shouldRecover) {
+        const recovered = recoverTableFromRaw(data);
+        if (recovered) {
+          headers = recovered.headers;
+          rows = recovered.rows;
+        }
+      }
+
+      if (!headers.length && rows.length) {
+        const widestRow = rows.reduce((max, row) => Math.max(max, row.length), 1);
+        headers = Array.from({ length: widestRow }, (_, i) => 'Column ' + (i + 1));
+      }
+      if (!headers.length) headers = ['Column 1'];
+
+      const width = headers.length;
+      rows = rows.map(row => {
+        const normalizedRow = (Array.isArray(row) ? row : [row]).map(c => toCellText(c));
+        while (normalizedRow.length < width) normalizedRow.push('');
+        return normalizedRow.slice(0, width);
+      });
+
+      // Track how rows/columns move so server-side cell flags can be remapped onto
+      // the table the user actually sees.
+      let rowMap = rows.map((_, ri) => ri);
+      let colMap = headers.map((_, ci) => ci);
+
+      // Filter separator rows (every cell is only dashes, colons, or whitespace)
+      const keptRows = [];
+      rows = rows.filter((row, ri) => {
+        const keep = !row.every(cell => /^[-:\s]*$/.test(toCellText(cell)));
+        if (keep) keptRows.push(rowMap[ri]);
+        return keep;
+      });
+      rowMap = keptRows;
+
+      // Strip entirely-empty columns — but never on a locked schema. When the
+      // backend has pinned a DTR or timesheet to its canonical column list, a
+      // column that happens to be blank on this page is still part of the schema,
+      // and dropping it here puts the batch right back to a different width per
+      // file. That is exactly what made the pages fail to line up.
+      const schemaLocked = !!(data && (data.is_dtr || data.is_timesheet || data.is_inout));
+      if (rows.length > 0 && !schemaLocked) {
+        const emptyCols = headers.map((_, ci) => rows.every(row => !toCellText(row[ci]).trim()));
+        if (emptyCols.some(Boolean)) {
+          const keep = headers.map((_, ci) => ci).filter(ci => !emptyCols[ci]);
+          headers = keep.map(ci => headers[ci]);
+          rows = rows.map(row => keep.map(ci => row[ci]));
+          colMap = keep.map(ci => colMap[ci]);
+        }
+      }
+
+      return { headers, rows, rowMap, colMap };
+    }
+
+    // ── Server-side cell flags (arithmetic verification) ─────────────────
+    // The backend reports flags against its own row/column indexes; translate them
+    // to the post-normalization grid, dropping any whose cell no longer exists.
+    function remapCellMarkers(markers, rowMap, colMap) {
+      const rowInv = new Map(rowMap.map((orig, i) => [orig, i]));
+      const colInv = new Map(colMap.map((orig, i) => [orig, i]));
+      const out = [];
+      (markers || []).forEach(m => {
+        const r = rowInv.get(m.row);
+        const c = colInv.get(m.col);
+        if (r === undefined || c === undefined) return;
+        out.push(Object.assign({}, m, { row: r, col: c }));
+      });
+      return out;
+    }
+
+    function markerKey(row, col) {
+      return row + ':' + col;
+    }
+
+    function buildMarkerMap(markers) {
+      const map = new Map();
+      (markers || []).forEach(m => map.set(markerKey(m.row, m.col), m));
+      return map;
+    }
+
+    // Deleting a row/column shifts every marker after it, so keep them aligned
+    // rather than leaving highlights pointing at the wrong cells.
+    function shiftMarkersForRemoval(markers, removedRow, removedCol) {
+      return (markers || []).reduce((acc, m) => {
+        if (removedRow !== undefined) {
+          if (m.row === removedRow) return acc;
+          acc.push(Object.assign({}, m, { row: m.row > removedRow ? m.row - 1 : m.row }));
+          return acc;
+        }
+        if (m.col === removedCol) return acc;
+        acc.push(Object.assign({}, m, { col: m.col > removedCol ? m.col - 1 : m.col }));
+        return acc;
+      }, []);
+    }
+
+    function applyMarkerRemoval(removedRow, removedCol) {
+      currentFlagged = shiftMarkersForRemoval(currentFlagged, removedRow, removedCol);
+      currentCorrections = shiftMarkersForRemoval(currentCorrections, removedRow, removedCol);
+    }
+
+    // Once the user edits a flagged cell they have reviewed it, so drop the flag.
+    function clearCellFlag(row, col) {
+      const before = currentFlagged.length;
+      currentFlagged = currentFlagged.filter(m => !(m.row === row && m.col === col));
+      if (currentFlagged.length !== before) {
+        saveEditorState();
+        renderBatchList();
+        return true;
+      }
+      return false;
+    }
+
+    function renderVerifyBanner() {
+      const banner = document.getElementById('verify-banner');
+      if (!banner) return;
+      const nFlag = currentFlagged.length;
+      const nFix = currentCorrections.length;
+      if (!nFlag && !nFix) {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+        return;
+      }
+      const parts = [];
+      if (nFix) {
+        parts.push(`<span style="color:var(--aero-accent);font-weight:600;">${nFix} cell${nFix === 1 ? '' : 's'} auto-corrected</span> — re-read from the image and now consistent with the printed totals.`);
+      }
+      if (nFlag) {
+        const rowsAffected = new Set(currentFlagged.map(m => m.row)).size;
+        parts.push(`<span style="color:#d68a00;font-weight:600;">${nFlag} cell${nFlag === 1 ? '' : 's'} need review</span> across ${rowsAffected} row${rowsAffected === 1 ? '' : 's'} (highlighted amber): the printed TOTAL disagrees with Time out − Time in, so check them against the image. Editing a cell clears its flag.`);
+      }
+      banner.innerHTML = parts.join('<br>');
+      banner.style.cssText = nFlag
+        ? 'background:rgba(255,176,32,0.12);border:1px solid rgba(214,138,0,0.4);color:var(--aero-text);'
+        : 'background:rgba(6,214,160,0.10);border:1px solid rgba(6,160,120,0.35);color:var(--aero-text);';
+      banner.classList.remove('hidden');
+    }
+
+    // ── Build fields from template + OCR data ──────────────────────────
+    function buildFields(templateFields, ocrLines) {
+      // Build a map from OCR text lines: normalize keys for fuzzy matching
+      const ocrMap = {};
+      ocrLines.forEach(line => {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx > 0 && colonIdx < 60) {
+          const key = line.substring(0, colonIdx).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          const val = line.substring(colonIdx + 1).trim();
+          if (val) ocrMap[key] = val;
+        }
+        // Also try matching without colon ("Name Dr. Vera" etc)
+        const spaceIdx = line.indexOf(' ');
+        if (spaceIdx > 0) {
+          const firstWord = line.substring(0, spaceIdx).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (firstWord.length >= 3 && !ocrMap[firstWord]) {
+            ocrMap[firstWord] = line.substring(spaceIdx + 1).trim();
+          }
+        }
+      });
+
+      if (templateFields.length) {
+        return templateFields.map(([label, defaultVal]) => {
+          const cleanLabel = label.replace(/:$/, '').trim();
+          const key = cleanLabel.toLowerCase().replace(/[^a-z0-9]/g, '');
+          // Try exact key first, then try partial matching
+          let ocrVal = ocrMap[key] || '';
+          if (!ocrVal) {
+            // Try matching on substrings of the key
+            for (const [k, v] of Object.entries(ocrMap)) {
+              if (k.includes(key) || key.includes(k)) {
+                ocrVal = v;
+                break;
+              }
+            }
+          }
+          return { label: cleanLabel, value: ocrVal || defaultVal };
+        });
+      }
+      // No template: build from OCR lines
+      return ocrLines.map((text, i) => {
+        const colonIdx = text.indexOf(':');
+        if (colonIdx > 0 && colonIdx < 50) {
+          return { label: text.substring(0, colonIdx).trim(), value: text.substring(colonIdx + 1).trim() };
+        }
+        return { label: 'Line ' + (i + 1), value: text };
+      });
+    }
+
+    // ── Non-table fields rendering ──────────────────────────────────────
+    function renderNonTableFields() {
+      renderFieldGroup(headerFields, textAboveFields, textAboveSection, 'above');
+      renderFieldGroup(footerFields, textBelowFields, textBelowSection, 'below');
+    }
+
+    function renderFieldGroup(fields, container, section, prefix) {
+      if (fields.length === 0) {
+        container.innerHTML = `<p class="text-xs text-gray-400 col-span-2 py-1">No ${prefix === 'above' ? 'header' : 'footer'} fields detected. Click "Add Field" to add one.</p>`;
+        return;
+      }
+      container.innerHTML = fields.map((f, i) =>
+        `<div class="flex items-center gap-1 bg-white rounded-lg border border-gray-200 px-2 py-1.5 group">
+          <input type="text" value="${escapeHtml(f.label)}" data-prefix="${prefix}" data-idx="${i}" data-field="label"
+                 class="w-32 shrink-0 text-xs font-semibold text-gray-500 bg-transparent border-none outline-none
+                        focus:ring-0 focus:bg-gray-100 rounded px-1 py-0.5" />
+          <span class="text-gray-300 text-xs">:</span>
+          <input type="text" value="${escapeHtml(f.value)}" data-prefix="${prefix}" data-idx="${i}" data-field="value"
+                 class="flex-1 text-sm text-gray-800 bg-transparent border-none outline-none
+                        focus:ring-0 focus:bg-indigo-50 rounded px-1 py-0.5" />
+          <button onclick="removeField('${prefix}', ${i})"
+                  class="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition ml-1 shrink-0" title="Remove field">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>`
+      ).join('');
+
+      container.querySelectorAll('input').forEach(inp => {
+        inp.addEventListener('blur', () => {
+          const idx = parseInt(inp.dataset.idx);
+          const arr = inp.dataset.prefix === 'above' ? headerFields : footerFields;
+          arr[idx][inp.dataset.field] = inp.value.trim();
+        });
+        inp.addEventListener('focus', () => {
+          scrollImageToField(inp.dataset.prefix === 'above' ? 'top' : 'bottom');
+        });
+      });
+    }
+
+    function addField(prefix) {
+      const arr = prefix === 'above' ? headerFields : footerFields;
+      arr.push({ label: 'Field ' + (arr.length + 1), value: '' });
+      renderNonTableFields();
+      // Focus the new label input
+      const container = prefix === 'above' ? textAboveFields : textBelowFields;
+      const inputs = container.querySelectorAll('input[data-field="label"]');
+      if (inputs.length) inputs[inputs.length - 1].focus();
+    }
+
+    function removeField(prefix, idx) {
+      const arr = prefix === 'above' ? headerFields : footerFields;
+      arr.splice(idx, 1);
+      renderNonTableFields();
+    }
+
+    // ── Table rendering ───────────────────────────────────────────────────
+    function renderTable() {
+      const flagMap = buildMarkerMap(currentFlagged);
+      const fixMap = buildMarkerMap(currentCorrections);
+      renderVerifyBanner();
+
+      // Header
+      tableHead.innerHTML = '<tr><th class="w-8"></th>' +
+        currentHeaders.map((h, i) =>
+          `<th class="px-2 py-3 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 group/header">
+            <div class="flex items-center gap-2">
+              <button onclick="removeColumn(${i})" class="opacity-0 group-hover/header:opacity-100 text-red-400 hover:text-red-600 transition shrink-0" title="Delete column">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9" stroke-width="2"/>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h8"/>
+                </svg>
+              </button>
+              <span contenteditable="true" class="flex-1 block min-w-0 focus:outline-none" data-col="${i}">${escapeHtml(h)}</span>
+            </div>
+          </th>`
+        ).join('') + '</tr>';
+
+      // Body
+      tableBody.innerHTML = currentRows.map((row, ri) =>
+        '<tr class="border-b border-gray-100 group">' +
+        `<td class="px-1 py-1 w-8 text-center">
+          <button onclick="removeRow(${ri})" class="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition" title="Delete row">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="9" stroke-width="2"/>
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h8"/>
+            </svg>
+          </button>
+        </td>` +
+        row.map((cell, ci) => {
+          const flag = flagMap.get(markerKey(ri, ci));
+          const fix = fixMap.get(markerKey(ri, ci));
+          const cellClass = flag ? ' cell-flagged' : (fix ? ' cell-corrected' : '');
+          const tip = flag
+            ? ` title="⚠ Needs review — ${escapeHtml(flag.reason || 'failed arithmetic check')}"`
+            : (fix ? ` title="Auto-corrected from ${escapeHtml(fix.from)} (verified against the printed total)"` : '');
+          return `<td class="px-1 py-1 text-gray-800 border-r border-gray-50 last:border-r-0 relative group/cell${cellClass}"${tip} data-row="${ri}" data-col="${ci}">
+            <div class="flex items-center gap-1">
+              <span contenteditable="true" class="flex-1 px-2 py-1 rounded focus:outline-none focus:bg-indigo-50" data-row="${ri}" data-col="${ci}">${escapeHtml(cell)}</span>
+              <button onclick="clearCell(${ri},${ci})" title="Clear cell"
+                      class="opacity-0 group-hover/cell:opacity-100 shrink-0 text-gray-300 hover:text-orange-400 transition">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+          </td>`;
+        }).join('') + '</tr>'
+      ).join('');
+
+      // Sync edits back to state
+      tableHead.querySelectorAll('span[contenteditable][data-col]').forEach(span => {
+        span.addEventListener('blur', () => {
+          currentHeaders[parseInt(span.dataset.col)] = span.textContent.trim();
+        });
+      });
+      tableBody.querySelectorAll('span[contenteditable]').forEach(span => {
+        span.addEventListener('blur', () => {
+          const r = parseInt(span.dataset.row);
+          const c = parseInt(span.dataset.col);
+          const next = span.textContent.trim();
+          const changed = currentRows[r][c] !== next;
+          currentRows[r][c] = next;
+          if (changed && clearCellFlag(r, c)) renderTable();
+        });
+        span.addEventListener('focus', () => {
+          const r = parseInt(span.dataset.row);
+          const c = parseInt(span.dataset.col);
+          scrollImageToCell(r, c, currentRows.length, currentHeaders.length);
+        });
+        span.addEventListener('keydown', (e) => {
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            const cells = [...tableBody.querySelectorAll('span[contenteditable]')];
+            const idx = cells.indexOf(span);
+            const next = e.shiftKey ? cells[idx - 1] : cells[idx + 1];
+            if (next) next.focus();
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            span.blur();
+          }
+        });
+      });
+    }
+
+    function clearCell(ri, ci) {
+      currentRows[ri][ci] = '';
+      clearCellFlag(ri, ci);
+      renderTable();
+    }
+
+    // ── Consolidate repeated cells ────────────────────────────────────────
+    // vertical: within the selected column, clear a cell if it equals the cell above it
+    // horizontal: within the selected row, clear a cell if it equals the cell to its left
+    function consolidate(direction) {
+      document.activeElement?.blur();
+      if (direction === 'vertical') {
+        const colInput = document.getElementById('consolidate-col');
+        const colNum = parseInt(colInput?.value) || 1;
+        const c = Math.max(0, Math.min(colNum - 1, currentHeaders.length - 1));
+        let lastSeen = '';
+        for (let r = 0; r < currentRows.length; r++) {
+          const val = currentRows[r][c];
+          if (val !== '' && val === lastSeen) {
+            currentRows[r][c] = '';
+          } else {
+            lastSeen = val;
+          }
+        }
+      } else {
+        const rowInput = document.getElementById('consolidate-row');
+        const rowNum = rowInput?.value ? parseInt(rowInput.value) : currentRows.length;
+        const r = Math.max(0, Math.min(rowNum - 1, currentRows.length - 1));
+        let lastSeen = '';
+        for (let c = 0; c < (currentRows[r]?.length ?? 0); c++) {
+          const val = currentRows[r][c];
+          if (val !== '' && val === lastSeen) {
+            currentRows[r][c] = '';
+          } else {
+            lastSeen = val;
+          }
+        }
+      }
+      renderTable();
+    }
+
+    // ── Field → image position mapping ────────────────────────────────────
+    // Helper: pan so that image-pixel (px,py) is centered in the viewer.
+    // Uses offsetWidth/offsetHeight for stable dimensions regardless of scroll
+    // position or viewport clipping (getBoundingClientRect can return partial
+    // heights when the viewer is scrolled off-screen on non-sticky layouts).
+    function _panTo(px, py, scale) {
+      ivAutoFit = false;
+      const W = imageViewer.offsetWidth;
+      const H = imageViewer.offsetHeight;
+      const iw = imagePreview.naturalWidth, ih = imagePreview.naturalHeight;
+      if (!iw || !W || !H) return;
+      if (scale !== undefined) ivScale = scale;
+      const scaledW = iw * ivScale, scaledH = ih * ivScale;
+      // Clamp target pixel so it stays within the image bounds
+      const safePx = Math.max(0, Math.min(px, iw));
+      const safePy = Math.max(0, Math.min(py, ih));
+      // Place target pixel at viewer center
+      ivX = W / 2 - safePx * ivScale;
+      ivY = H / 2 - safePy * ivScale;
+      // Clamp so image edges don't scroll past viewer edges
+      if (scaledW > W) {
+        ivX = Math.min(0, Math.max(W - scaledW, ivX));
+      } else {
+        ivX = (W - scaledW) / 2;
+      }
+      if (scaledH > H) {
+        ivY = Math.min(0, Math.max(H - scaledH, ivY));
+      } else {
+        ivY = (H - scaledH) / 2;
+      }
+      ivApply();
+    }
+
+    // Grid cell: zoom in and center on estimated cell position.
+    // Uses simple proportional mapping: the image IS the document, so we
+    // divide most of the image (with light margins) into a grid matching
+    // the table dimensions and bias toward the upper-left of each cell.
+    function scrollImageToCell(rowIndex, colIndex, totalRows, totalCols) {
+      if (!imagePreview.naturalHeight || totalRows <= 0) return;
+      const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
+      const scale = ivScale < 1.05 ? 1.15 : ivScale;
+      const marginX = 0.03;
+      const marginY = 0.04;
+      const rFrac = (rowIndex + 0.25) / totalRows;
+      const cFrac = (colIndex + 0.25) / totalCols;
+      const px = iw * (marginX + cFrac * (1 - 2 * marginX));
+      const py = ih * (marginY + rFrac * (1 - 2 * marginY));
+      _panTo(px, py, scale);
+    }
+
+    // Header fields: center near top of image.
+    // Footer fields: center near bottom of image.
+    function scrollImageToField(position) {
+      if (!imagePreview.naturalHeight) return;
+      const ih = imagePreview.naturalHeight, iw = imagePreview.naturalWidth;
+      const scale = ivScale < 1.1 ? 1.25 : ivScale;
+      if (position === 'top') {
+        _panTo(iw * 0.1, ih * 0.06, scale);
+      } else {
+        _panTo(iw * 0.1, ih * 0.94, scale);
+      }
+    }
+
+    // ── Table manipulation ────────────────────────────────────────────────
+    function addRow() {
+      currentRows.push(new Array(currentHeaders.length).fill(''));
+      renderTable();
+      // Focus first cell of new row
+      const lastRow = tableBody.lastElementChild;
+      if (lastRow) lastRow.firstElementChild?.focus();
+    }
+
+    function removeLastRow() {
+      if (currentRows.length > 0) {
+        currentRows.pop();
+        renderTable();
+      }
+    }
+
+    function removeRow(index) {
+      if (index >= 0 && index < currentRows.length) {
+        currentRows.splice(index, 1);
+        applyMarkerRemoval(index, undefined);
+        renderTable();
+      }
+    }
+
+    function removeColumn(index) {
+      if (currentHeaders.length <= 1) return;
+      if (index < 0 || index >= currentHeaders.length) return;
+      currentHeaders.splice(index, 1);
+      currentRows.forEach(row => row.splice(index, 1));
+      applyMarkerRemoval(undefined, index);
+      renderTable();
+    }
+
+    function addColumn() {
+      currentHeaders.push('New Column');
+      currentRows.forEach(row => row.push(''));
+      renderTable();
+    }
+
+    function removeLastColumn() {
+      if (currentHeaders.length > 1) {
+        currentHeaders.pop();
+        currentRows.forEach(row => row.pop());
+        renderTable();
+      }
+    }
+
+    // ── Downloads (one CSV/TXT per processed image) ──────────────────────
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function baseName(fileName, fallback) {
+      return (fileName || '').replace(/\.[^.]+$/, '') || fallback;
+    }
+
+    function buildCsvForResult(r) {
+      const csvLines = [];
+
+      // Header fields above table
+      if (r.headerFields.length) {
+        r.headerFields.forEach(f => csvLines.push(escapeCSVRow([f.label + ':', f.value])));
+        csvLines.push('');  // blank separator line
+      }
+
+      // Table data
+      const rows = [r.headers, ...r.rows];
+      rows.forEach(row => csvLines.push(escapeCSVRow(row)));
+
+      // Footer fields below table
+      if (r.footerFields.length) {
+        csvLines.push('');  // blank separator line
+        r.footerFields.forEach(f => csvLines.push(escapeCSVRow([f.label + ':', f.value])));
+      }
+
+      return csvLines.join('\n');
+    }
+
+    function downloadResult(i) {
+      if (i === activeResultIndex) saveEditorState();
+      const r = batchResults[i];
+      if (!r || r.status !== 'done') return;
+
+      const blob = new Blob(['﻿' + buildCsvForResult(r)], { type: 'text/csv;charset=utf-8;' });
+      triggerDownload(blob, baseName(r.fileName, 'table') + '.csv');
+      
+    }
+
+    // Editor buttons operate on the currently open result
+    function downloadCSV() { downloadResult(activeResultIndex); }
+
+    // The employee name the workbook keys its blocks on. The DTR's own NAME field
+    // is the reliable source; fall back to the file name so a block is never
+    // silently unnamed (which would merge unrelated people under one heading).
+    // Which header field carries the person's own name. Clients label it
+    // differently: Tokyo and Baobab print it under "SALES DEMO", Peak 24 under
+    // "EMPLOYEE". Matching only /^name/ meant none of those were found and the
+    // batch fell back to the file name, so the workbook came back keyed by
+    // "DTR (3)" instead of the employee. Anchored at both ends and tried in
+    // order, so "SALES DEMO ID NO" and "VENDOR NAME" can never win.
+    const EMPLOYEE_NAME_LABELS = [
+      /^name$/i,
+      /^employee(?:'?s)?(?:\s+name)?$/i,
+      /^sales\s*demo$/i,
+      /^name\b/i,          // "NAME OF EMPLOYEE" and similar
+    ];
+
+    // The DPAM form most clients use prints LAST NAME / FIRST NAME / MIDDLE NAME
+    // as sub-labels under a single NAME line. Usually the model returns one
+    // "NAME: ..." field, but about one read in three it returns the three parts
+    // separately — and then nothing above matched, so that employee's block was
+    // labelled with the file name ("DTR (21)"). Assemble the parts instead.
+    const EMPLOYEE_NAME_PARTS = [
+      ['last', /^(last\s*name|surname|family\s*name)$/i],
+      ['first', /^(first\s*name|given\s*name)$/i],
+      ['middle', /^(middle\s*name|middle\s*initial|m\.?\s*i\.?)$/i],
+    ];
+
+    function employeeNameFor(r) {
+      const fields = (r.headerFields || []).concat(r.footerFields || []);
+      const labelOf = f => String(f.label || '').replace(/:\s*$/, '').trim();
+      const valueOf = f => String(f.value || '').trim();
+      for (const pattern of EMPLOYEE_NAME_LABELS) {
+        const hit = fields.find(f => pattern.test(labelOf(f)) && valueOf(f));
+        if (hit) return valueOf(hit);
+      }
+      const part = {};
+      for (const [key, pattern] of EMPLOYEE_NAME_PARTS) {
+        const hit = fields.find(f => pattern.test(labelOf(f)) && valueOf(f));
+        if (hit) part[key] = valueOf(hit);
+      }
+      if (part.last || part.first) {
+        const given = [part.first, part.middle].filter(Boolean).join(' ');
+        return part.last && given ? `${part.last}, ${given}` : (part.last || given);
+      }
+      return baseName(r.fileName, 'Unnamed');
+    }
+
+    async function downloadDtrWorkbook() {
+      saveEditorState();
+      const files = batchResults
+        .filter(r => r.status === 'done' && r.rows.length)
+        .map(r => ({
+          name: employeeNameFor(r),
+          file: r.fileName,
+          headers: r.headers,
+          rows: r.rows,
+          flagged_rows: [...new Set((r.flagged || []).map(f => f.row))],
+        }));
+      if (!files.length) {
+        alert('No extracted DTR tables to compile yet.');
+        return;
+      }
+
+      const btn = document.getElementById('download-xlsx-btn');
+      const label = document.getElementById('download-xlsx-label');
+      const previous = label.textContent;
+      btn.disabled = true;
+      label.textContent = 'Building…';
+      try {
+        const resp = await fetch('/api/dtr-workbook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files, client: selectedClient }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(err.detail || 'Export failed');
+        }
+        const warnings = resp.headers.get('X-Export-Warnings');
+        const blob = await resp.blob();
+        // Keep the name the server chose ("DTR - Timekeeping - Bikezilla.xlsx").
+        // A fixed name here meant every client's batch saved as the same file.
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const named = disposition.match(/filename="?([^";]+)"?/i);
+        triggerDownload(blob, named ? named[1] : 'DTR - Timekeeping.xlsx');
+        if (warnings) alert('Workbook built, with notes:\n\n' + warnings.split(' | ').join('\n'));
+      } catch (e) {
+        alert('Could not build the workbook: ' + e.message);
+      } finally {
+        label.textContent = previous;
+        btn.disabled = false;
+        renderBatchList();
+      }
+    }
+
+    async function downloadAllResults() {
+      saveEditorState();
+      const doneIndexes = batchResults
+        .map((r, i) => (r.status === 'done' ? i : -1))
+        .filter(i => i !== -1);
+      for (const i of doneIndexes) {
+        downloadResult(i);
+        // Small stagger so browsers don't swallow multiple programmatic downloads
+        await new Promise(res => setTimeout(res, 350));
+      }
+    }
+
+    function escapeCSVRow(row) {
+      return row.map(cell => {
+        const val = String(cell).replace(/"/g, '""');
+        return /[,"\n\r]/.test(val) ? `"${val}"` : val;
+      }).join(',');
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    function showSection(name) {
+      uploadSection.classList.toggle('hidden', name !== 'upload');
+      loadingSection.classList.toggle('hidden', name !== 'loading');
+      errorSection.classList.toggle('hidden', name !== 'error');
+      resultsSection.classList.toggle('hidden', name !== 'results');
+    }
+
+    function resetApp() {
+      selectedFiles = [];
+      batchResults = [];
+      activeResultIndex = -1;
+      batchPage = 0;
+      batchPrompt = '';
+      batchRotation = 0;
+      batchRotationResolved = false;
+      revokeAllThumbs();
+      fileInput.value = '';
+      currentHeaders = [];
+      currentRows = [];
+      headerFields = [];
+      footerFields = [];
+      currentFlagged = [];
+      currentCorrections = [];
+      ocrRawText = '';
+      amendMessages = [];
+      amendHistory = [];
+      if (amendInput) amendInput.value = '';
+      if (amendListening && amendRecognition) {
+        try { amendRecognition.stop(); } catch (_) {}
+      }
+      amendListening = false;
+      updateVoiceIndicator();
+      renderAmendChat();
+      updateUndoButtonState();
+      imagePreview.removeAttribute('src');
+      imageName.textContent = '';
+      renderSelectedFiles();
+      batchPanel.classList.add('hidden');
+      batchList.innerHTML = '';
+      batchPagination.innerHTML = '';
+      editorPanel.classList.remove('hidden');
+      previewPanel.classList.remove('hidden');
+      tableResults.classList.remove('hidden');
+      // Keep CSV template and prompt — user typically reuses same settings across images
+      showSection('upload');
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    renderAmendChat();
+    updateVoiceIndicator();
+    updateUndoButtonState();
+  </script>
+</body>
+</html>
