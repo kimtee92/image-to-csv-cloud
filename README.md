@@ -433,8 +433,23 @@ Workflow, no local machine needed:
 3. When it's right, open a pull request `dev` → `main` on GitHub and merge it
    (works from the GitHub mobile app). The merge deploys to **live**.
 
-If a step fails (preflight, build, health check), nothing is deployed and the
-service keeps serving its previous revision.
+If a step fails (preflight, recalc, build, health check), nothing is deployed and
+the service keeps serving its previous revision. Build results also show as checks
+on each commit and pull request on GitHub.
+
+**Spreadsheet check (`recalc` step).** Every build fills each client template with
+fixed test shifts, recalculates it in LibreOffice and compares every formula on the
+filled rows with what Excel 365 computed for the same export (`ci/golden/*.json`).
+It fails on `#NAME?`, on error cells, or on any value that differs. Debian's
+LibreOffice lacks `LET`/`XLOOKUP` like Excel 2016/2019, so a 365-only function that
+reaches an export is caught as `#NAME?`.
+
+When a change is *meant* to alter computed values (a new or updated client
+template, new rules), re-record the expected values on a PC with Excel and Python
+3.11, review the diff, and commit it:
+```powershell
+powershell -ExecutionPolicy Bypass -File ci\record_golden.ps1
+```
 
 Both triggers run [cloudbuild.yaml](cloudbuild.yaml); the staging one only overrides `_SERVICE`:
 
