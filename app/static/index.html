@@ -2780,7 +2780,8 @@
             `<td ${td}>${d.date.slice(5)} ${d.weekday}</td>` +
             `<td ${td}>${escapeHtml(d.schedule)}</td><td ${td}>${escapeHtml(d.time_in)}</td><td ${td}>${escapeHtml(d.time_out)}</td>` +
             `<td ${td}>${escapeHtml(d.remarks)}</td>` +
-            `<td ${td}><select onchange="setTkTag(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
+            `<td class="px-2 py-1" style="color:var(--aero-text);border-bottom:1px solid var(--aero-glass-border);min-width:200px;max-width:320px;white-space:normal;">` +
+            `<select onchange="setTkTag(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
             `style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);">${options}</select>${sug}</td>` +
             `<td ${td}>${[hours, credit].filter(Boolean).join(' · ')}</td>` +
             `<td ${td}>${d.late + d.undertime ? (d.late + d.undertime) : ''}</td>` +
