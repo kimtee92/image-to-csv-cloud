@@ -210,10 +210,14 @@ def test_suggest_hints_are_not_applied():
 
 
 def test_suggest_rest_day_pattern_hint():
-    """Worked on a weekday that was RD the week before: a hint, not a tag."""
+    """Worked on a weekday that was RD the week before, with an unreadable mark: a hint."""
     thu1, thu2 = date(2026, 10, 29), date(2026, 11, 5)
-    s = suggest([DayInput(thu1, "RD"), DayInput(thu2, "9-7", "9:00", "19:00")])
+    s = suggest([DayInput(thu1, "RD"), DayInput(thu2, "9-7", "9:00", "19:00", remarks="NDP")])
     assert (s[thu2].tag, s[thu2].sure) == ("WDO", False)
+    # Without anything written on the row the pattern alone is noise (rosters move).
+    assert thu2 not in suggest([DayInput(thu1, "RD"), DayInput(thu2, "9-7", "9:00", "19:00")])
+    # Readable marks (OT, NDF) are not a reason either.
+    assert thu2 not in suggest([DayInput(thu1, "RD"), DayInput(thu2, "9-7", "9:00", "20:00", remarks="1 OT")])
 
 
 def test_review_confirmed_tag_wins():

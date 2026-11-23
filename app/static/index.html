@@ -2752,7 +2752,7 @@
           `<div class="text-sm font-semibold mb-2" style="color:var(--aero-text);">${escapeHtml(e.name)} <span class="text-xs font-normal" style="color:var(--aero-text3);">${escapeHtml(e.file || '')}</span></div>`;
         const empFlags = e.flags.filter(f => !/^\d{4}-\d{2}-\d{2}:/.test(f));
         if (empFlags.length) detail += `<p class="text-xs mb-2" style="color:#d68a00;">${empFlags.map(escapeHtml).join('<br>')}</p>`;
-        detail += `<table class="text-xs w-full"><thead><tr>` +
+        detail += `<div class="overflow-x-auto"><table class="text-xs w-full"><thead><tr>` +
           ['Date', 'Schedule', 'In', 'Out', 'Marks', 'Tag', 'Hours', 'Late/UT', 'Check'].map(h => `<th ${th}>${h}</th>`).join('') +
           `</tr></thead><tbody>`;
         for (const d of e.days) {
@@ -2786,7 +2786,7 @@
             `<td ${td}>${d.late + d.undertime ? (d.late + d.undertime) : ''}</td>` +
             `<td ${td} style="color:#d68a00;white-space:normal;">${d.flags.map(escapeHtml).join('<br>')}</td></tr>`;
         }
-        detail += `</tbody></table></div>`;
+        detail += `</tbody></table></div></div>`;
       });
       document.getElementById('tk-detail').innerHTML = detail;
     }

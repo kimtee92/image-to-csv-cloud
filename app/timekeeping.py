@@ -472,6 +472,18 @@ def _marks(remarks) -> set[str]:
     return out
 
 
+# Words a checker writes that the app understands; anything else is unreadable handwriting.
+_KNOWN_MARK_WORDS = {"WDO", "SHWDO", "LHWDO", "SH", "SPL", "SPECIAL", "LH", "LEGAL", "LEG", "REGULAR",
+                     "OT", "NDF", "ND", "NDOT", "HR", "HRS", "RD", "REST", "DAY", "DAYOFF", "OFF",
+                     "ULH", "UL", "HOL", "HOLIDAY", "MIN", "MINS"}
+
+
+def _unreadable_marks(remarks) -> bool:
+    """Something is written on the row that the app couldn't make out ("NDP" for a scrawled WDO)."""
+    words = re.findall(r"[A-Z]+", str(remarks or "").upper())
+    return any(w not in _KNOWN_MARK_WORDS for w in words)
+
+
 def _amount(value) -> float:
     try:
         return float(str(value).replace(",", "").strip() or 0)
@@ -521,10 +533,13 @@ def suggest_tags(days: list[DayInput], profile: Profile = CHICKEN_24,
         elif rest_day:
             out[d.date] = Suggestion("WDO", rest_why[:1].upper() + rest_why[1:], True)
         else:
+            # Working a weekday that is a rest day in the other week is common (rosters
+            # move), so on its own it is noise: 4 of 5 such hints were wrong on DPAM's
+            # sample. It only earns a hint when something unreadable is written on the row.
             others = [x for x in rest_weekdays.get(d.date.weekday(), []) if x != d.date]
-            if others and sched.kind == "shift":
-                out[d.date] = Suggestion("WDO", f"{d.date:%A} was a rest day on "
-                                         f"{others[0]:%d %b}: a rest day worked?", False)
+            if others and sched.kind == "shift" and _unreadable_marks(d.remarks):
+                out[d.date] = Suggestion("WDO", f"unreadable mark {d.remarks!r}; {d.date:%A} was a "
+                                         f"rest day on {others[0]:%d %b}: a rest day worked?", False)
     return out
 
 
