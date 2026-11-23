@@ -143,13 +143,15 @@ class Schedule:
     kind: str                    # "shift" | "rest" | "off" | "unreadable"
     text: str
     written_end_mismatch: bool = False
+    repaired_from_end: bool = False   # start misread; taken as written end - 10 hrs
 
 
 def parse_schedule(text, profile: Profile = CHICKEN_24) -> Schedule:
     """'12-10' -> 12:00-22:00; '1-11' -> 13:00-23:00; '9:00-19:00' as written; RD etc. -> no shift."""
     raw = "" if text is None else str(text)
-    dotted = re.fullmatch(r"\s*(\d{1,2})\s*\.\s*(\d{1,2})\s*", raw)
-    if dotted:                                   # "11.9" is how a smudged "11-9" reads
+    # "11.9" / "11:9" is how a smudged "11-9" reads; "12:30" stays a time (30 is no hour).
+    dotted = re.fullmatch(r"\s*(\d{1,2})\s*[.:]\s*(\d{1,2})\s*", raw)
+    if dotted and int(dotted.group(2)) <= 12:
         raw = f"{dotted.group(1)}-{dotted.group(2)}"
     low = raw.strip().lower()
     if low in REST_DAY:
@@ -162,6 +164,13 @@ def parse_schedule(text, profile: Profile = CHICKEN_24) -> Schedule:
     sh, smi, sap, eh, emi, eap = (m.group(1), m.group(2), m.group(3), m.group(4), m.group(5), m.group(6))
     sh, eh = int(sh), int(eh)
     smi, emi = int(smi or 0), int(emi or 0)
+    short = smi == 0 and emi == 0 and not sap and not eap and ":" not in raw
+    if short and sh > 12 and 1 <= eh <= 12:
+        # "17-10": no short-form shift starts at 17 (they are written 7-12 and 1-6),
+        # so the start was misread (a tick through "12" reads as "17"). The end is
+        # an evening hour: 10 -> 22:00, and the start is 10 hrs before it.
+        end = (eh % 12 + 12) * 60 if eh != 12 else 24 * 60
+        return Schedule(end - profile.shift_minutes, end, "shift", raw, repaired_from_end=True)
     if sap:
         start = (sh % 12 + (12 if sap.lower().startswith("p") else 0)) * 60 + smi
     elif sh > 12:
@@ -353,6 +362,10 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
         sched = Schedule(t_in, t_in + profile.shift_minutes, "shift", "assumed from time in")
     if sched.written_end_mismatch:
         res.flags.append(f"schedule {day.schedule!r}: written end doesn't match a 10-hr shift")
+    if sched.repaired_from_end:
+        res.flags.append(f"schedule read as {day.schedule!r}: used "
+                         f"{sched.start // 60}:{sched.start % 60:02d}-{sched.end // 60}:{sched.end % 60:02d}"
+                         " from its end; check the scan")
 
     start, end = sched.start, sched.end
     res.worked = True

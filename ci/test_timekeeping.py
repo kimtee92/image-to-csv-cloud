@@ -261,8 +261,18 @@ def test_marks_found_in_number_columns():
 
 def test_dotted_schedule():
     """'11.9' is how a smudged '11-9' comes back."""
-    s = tk.parse_schedule("11.9")
-    assert (s.kind, s.start, s.end) == ("shift", 660, 1260)
+    for text in ("11.9", "11:9", "11 . 9"):
+        s = tk.parse_schedule(text)
+        assert (s.kind, s.start, s.end) == ("shift", 660, 1260), text
+    assert tk.parse_schedule("12:30").kind == "unreadable"      # a clock time, not a schedule
+
+
+def test_misread_schedule_start_taken_from_end():
+    """Real scan: a tick through '12-10' read as '17-10'. The end (22:00) fixes the start."""
+    s = tk.parse_schedule("17-10")
+    assert (s.start, s.end, s.repaired_from_end) == (720, 1320, True)
+    r = day("17-10", "12:00", "22:00")
+    assert r.columns["UT"] == 0 and any("from its end" in f for f in r.flags)
 
 
 if __name__ == "__main__":

@@ -59,8 +59,12 @@ def employee_name(ocr: dict, fallback: str) -> str:
 
 
 def key_for(name: str, staff: dict) -> str | None:
-    first = re.sub(r"[^a-z]", "", name.lower().split()[0]) if name.split() else ""
-    return next((k for k in staff if re.sub(r"[^a-z]", "", k.lower().split()[0]) == first), None)
+    """The key's employee for an extracted name; tolerant of a misread letter ("Jovilynn")."""
+    import difflib
+    norm = lambda s: re.sub(r"[^a-z ]", "", s.lower()).strip()  # noqa: E731
+    keys = {norm(k): k for k in staff}
+    hit = difflib.get_close_matches(norm(name), list(keys), n=1, cutoff=0.75)
+    return keys[hit[0]] if hit else None
 
 
 def main() -> int:
