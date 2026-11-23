@@ -3,6 +3,8 @@
 #
 #   push to dev  -> deploy-staging-on-push-dev -> Cloud Run image-to-csv-staging
 #   push to main -> deploy-on-push-main        -> Cloud Run image-to-csv (live)
+#   push to feature/timekeeping-engine -> deploy-engine-on-push-feature
+#                                      -> Cloud Run image-to-csv-engine
 #
 # The staging trigger overrides _SERVICE; everything else is shared, so what
 # passes on staging is exactly what ships to live.
@@ -32,7 +34,7 @@ steps:
   - id: preflight
     name: python:3.11-slim
     entrypoint: bash
-    args: ["-c", "PREFLIGHT_ONLY=1 bash deploy.sh && python ci/test_fill.py"]
+    args: ["-c", "PREFLIGHT_ONLY=1 bash deploy.sh && python ci/test_fill.py && python ci/test_timekeeping.py"]
 
   # Debian's LibreOffice (7.4) has no LET or XLOOKUP, like Excel 2016/2019, so a
   # 365-only function that slips into an export shows up here as #NAME?.
