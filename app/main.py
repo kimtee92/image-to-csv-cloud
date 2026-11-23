@@ -21,6 +21,8 @@ import google.auth
 from google.auth.transport.requests import Request as AuthRequest
 
 import clients as client_registry
+import holidays as holidays_cal
+import timekeeping
 import xlsx_fill
 
 logging.basicConfig(level=logging.INFO)
@@ -1299,13 +1301,17 @@ def _timesheet_canonicalise(table_data: dict) -> bool:
 # Holiday columns are in the canonical set even though the workbook template does
 # not read them: some of these sheets print them, and dropping a column that the
 # client filled in loses data that only exists on the paper.
+# SCHEDULE and REMARKS: 24 Chicken's sheets print the day's shift ("12-10", "RD")
+# between DAY and TIME IN, and the checker writes WDO / SPL / OT beside a row.
+# Both feed the timekeeping engine (schedule, Remarks tag); sheets without them
+# just leave the columns blank.
 INOUT_HEADERS = [
-    "DATE", "DAY", "TIME IN", "TIME OUT", "BREAK (HR)", "NORMAL", "OT HRS",
-    "HOLIDAY PAY", "HOLIDAY+OT", "TOTAL", "DEDUCTIONS", "NET TOTAL",
+    "DATE", "DAY", "SCHEDULE", "TIME IN", "TIME OUT", "BREAK (HR)", "NORMAL", "OT HRS",
+    "HOLIDAY PAY", "HOLIDAY+OT", "TOTAL", "DEDUCTIONS", "NET TOTAL", "REMARKS",
 ]
 INOUT_SLOTS = [
-    "date", "day", "time_in", "time_out", "break_hrs", "normal", "ot_hrs",
-    "holiday_pay", "holiday_ot", "total", "deductions", "net_total",
+    "date", "day", "schedule", "time_in", "time_out", "break_hrs", "normal", "ot_hrs",
+    "holiday_pay", "holiday_ot", "total", "deductions", "net_total", "remarks",
 ]
 
 
@@ -1314,7 +1320,11 @@ def _inout_map_columns(headers: list[str]) -> dict[str, int]:
     for i, header in enumerate(headers):
         text = str(header).lower()
         squashed = re.sub(r"[^a-z0-9]", "", text)
-        if squashed == "date" or squashed.endswith("date"):
+        if "sched" in squashed or squashed == "shift":
+            out.setdefault("schedule", i)
+        elif "remark" in squashed or squashed in ("notes", "note", "marks"):
+            out.setdefault("remarks", i)
+        elif squashed == "date" or squashed.endswith("date"):
             out.setdefault("date", i)
         elif squashed == "day":
             out.setdefault("day", i)
@@ -1359,7 +1369,7 @@ def _is_inout_table(headers: list[str]) -> bool:
 
 
 def _inout_canonicalise(table_data: dict) -> bool:
-    """Rewrite a recognised in/out sheet into the fixed 10-column schema."""
+    """Rewrite a recognised in/out sheet into the fixed in/out schema."""
     headers = table_data.get("headers") or []
     if not _is_inout_table(headers):
         return False
@@ -2200,16 +2210,18 @@ def _inout_instructions(user_prompt: str = "") -> str:
         '"full_text": Document-level metadata ONLY (employee name, position, period,',
         'store/outlet, any totals printed outside the grid). "LABEL: value" per line.',
         "",
-        '"headers": Use EXACTLY this list, verbatim, always all 10, in this order:',
+        f'"headers": Use EXACTLY this list, verbatim, always all {len(INOUT_HEADERS)}, in this order:',
     ]
     parts += ["  " + h for h in INOUT_HEADERS]
     parts += [
         "",
-        '"rows": One array per row of the grid, EXACTLY 10 values each.',
+        f'"rows": One array per row of the grid, EXACTLY {len(INOUT_HEADERS)} values each.',
         "",
         "HOW TO READ IT",
-        "1. Each row is one calendar day: a DATE, the weekday, one TIME IN and one",
-        "   TIME OUT, then the sheet's own computed columns.",
+        "1. Each row is one calendar day: a DATE, the weekday, the SCHEDULE, one TIME IN",
+        "   and one TIME OUT, then the sheet's own computed columns.",
+        '   SCHEDULE: copy the schedule cell exactly as written ("12-10", "9-7", "RD",',
+        '   "-"). Do not convert it to clock times. "" when the sheet has no SCHEDULE column.',
         "2. TIME IN must be earlier in the day than TIME OUT. Write both as 24-hour",
         "   HH:MM. A dash, blank or '-' means no punch that day -> \"\".",
         "3. BREAK (HR), NORMAL, OT HRS, TOTAL, DEDUCTIONS and NET TOTAL are numbers",
@@ -2218,6 +2230,11 @@ def _inout_instructions(user_prompt: str = "") -> str:
         "4. Keep every column in its own position. If a column is absent from this",
         '   sheet, emit "" for it rather than shifting the others left.',
         "5. Take care with 6 vs 8, 0 vs 8, 1 vs 7, 2 vs 7, 5 vs 6, 9 vs 4.",
+        "6. REMARKS: words or codes handwritten on that row on top of the printed",
+        '   sheet, e.g. WDO, SPL, SH, LH, OT, "1 OT", REST DAY. Copy them as written,',
+        '   wherever on the row they were written. "" when there are none. Ticks,',
+        "   check marks and initials are not remarks.",
+        '7. HOLIDAY PAY and HOLIDAY+OT: copy what is printed, blank stays "".',
     ]
     if user_prompt.strip():
         parts += ["", "Additional instructions for the rows:", user_prompt.strip()]
@@ -2980,6 +2997,118 @@ async def dtr_workbook(req: DTRWorkbookRequest):
         f"are available as CSV; add their .xlsx to app/templates/ and a TEMPLATES "
         f"entry to enable the Excel export."
     )
+
+
+# ── Timekeeping engine (computed columns, tag review) ─────────────────────────
+
+class TimekeepingTag(BaseModel):
+    employee: int             # index into files
+    date: str                 # YYYY-MM-DD
+    tag: str                  # "" (regular), WDO, SH, SHWDO, LH, LHWDO, ULH
+
+
+class TimekeepingHoliday(BaseModel):
+    date: str                 # YYYY-MM-DD
+    kind: str = "special"     # "special" or "regular"
+    name: str = "Local holiday"
+
+
+class TimekeepingRequest(BaseModel):
+    client: str = ""
+    files: list[DTRWorkbookFile] = []
+    tags: list[TimekeepingTag] = []          # tags the team confirmed on the review screen
+    holidays: list[TimekeepingHoliday] = []  # local holidays for this branch
+
+
+@app.get("/api/timekeeping/clients")
+async def timekeeping_clients():
+    """Clients whose columns the app calculates itself (the review screen shows for these)."""
+    return {"clients": sorted(timekeeping.PROFILES),
+            "tags": [*timekeeping.TAG_MATRIX.keys(), "ULH"],
+            "columns": timekeeping.COLUMNS}
+
+
+@app.post("/api/timekeeping")
+async def timekeeping_compute(req: TimekeepingRequest):
+    """Calculate a batch with the client's rules: per day the suggested and applied
+    Remarks tag, the routed hours, Late/UT and review flags; per employee the
+    DTR Summary's 26 columns. Nothing here touches Excel.
+    """
+    client_key = (req.client or "").strip().lower()
+    profile = timekeeping.PROFILES.get(client_key)
+    if profile is None:
+        label = (client_registry.get_client(client_key) or {}).get("label") or client_key or "this client"
+        raise HTTPException(400, f"The app doesn't calculate {label}'s columns yet.")
+    layout_name = (client_registry.get_client(client_key) or {}).get("layout")
+    mapper, canon, _ = _LAYOUT_MAPPERS.get(layout_name, (None, None, None))
+    if mapper is None:
+        raise HTTPException(400, f"No input layout for {client_key}.")
+
+    extra: dict[date, tuple[str, str]] = {}
+    for h in req.holidays:
+        d = timekeeping.parse_date(h.date)
+        if d:
+            extra[d] = (holidays_cal.REGULAR if h.kind.lower().startswith("reg") else holidays_cal.SPECIAL,
+                        h.name or "Local holiday")
+    confirmed: dict[int, dict[date, str]] = {}
+    for t in req.tags:
+        d = timekeeping.parse_date(t.date)
+        if d:
+            confirmed.setdefault(t.employee, {})[d] = timekeeping.normalize_tag(t.tag)
+
+    out = []
+    for idx, f in enumerate(req.files):
+        headers = [str(h) for h in (f.headers or [])]
+        rows = [[str(c) if c is not None else "" for c in r]
+                for r in (f.rows or []) if isinstance(r, list)]
+        while rows and _looks_like_header_row(rows[0]):
+            rows.pop(0)
+        mapping = mapper(headers)
+        # Forms print a 2-digit year or none; take the batch's year from any row that has one.
+        days: list[timekeeping.DayInput] = []
+        skipped = 0
+        year = next((d.year for r in rows
+                     for d in [timekeeping.parse_date(r[mapping["date"]])]
+                     if "date" in mapping and mapping["date"] < len(r) and d), None)
+        for r in rows:
+            values = {slot: r[i] for slot, i in mapping.items() if i < len(r)}
+            day = timekeeping.day_from_row(values, year)
+            if day is None:
+                skipped += bool("".join(r).strip())
+                continue
+            days.append(day)
+        review = timekeeping.review_employee(
+            f.name or f.file or f"Employee {idx + 1}", days, profile,
+            confirmed.get(idx), extra)
+        emp = review.employee
+        by_date = {d.date: d for d in days}
+        day_out = []
+        for res in emp.days:
+            src = by_date.get(res.date)
+            sug = review.suggestions.get(res.date)
+            day_out.append({
+                "date": res.date.isoformat(),
+                "weekday": res.date.strftime("%a"),
+                "schedule": src.schedule if src else "",
+                "time_in": str(src.time_in or "") if src else "",
+                "time_out": str(src.time_out or "") if src else "",
+                "remarks": src.remarks if src else "",
+                "tag": res.tag if res.tag in timekeeping.TAG_MATRIX or res.tag == "ULH" else "",
+                "confirmed": res.date in (confirmed.get(idx) or {}),
+                "suggestion": ({"tag": sug.tag, "reason": sug.reason, "sure": sug.sure} if sug else None),
+                "worked": res.worked,
+                "late": res.late, "undertime": res.undertime,
+                "ot": res.ot, "nd": res.nd, "nd_ot": res.nd_ot,
+                "columns": {k: v for k, v in res.columns.items() if v},
+                "flags": res.flags,
+            })
+        flags = list(emp.flags)
+        if skipped:
+            flags.insert(0, f"{skipped} row(s) without a readable date were left out")
+        out.append({"index": idx, "name": emp.name, "file": f.file,
+                    "totals": emp.totals, "flags": flags, "days": day_out})
+    return {"client": client_key, "profile": profile.name,
+            "columns": timekeeping.COLUMNS, "employees": out}
 
 
 @app.post("/api/detect-orientation")

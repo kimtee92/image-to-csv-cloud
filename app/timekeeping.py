@@ -192,6 +192,55 @@ def normalize_tag(tag) -> str:
     return t if t in TAG_MATRIX or t == "ULH" else ("" if t in ("", "-") else t)
 
 
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+
+
+def parse_date(value, default_year: int | None = None) -> date | None:
+    """'10/26/26', '11/1/2026', '2026-11-01', 'Nov 1, 2026' -> date (month first, as the forms print)."""
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})", text)
+    if m:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    else:
+        m = re.match(r"^(\d{1,2})[/.-](\d{1,2})(?:[/.-](\d{2,4}))?\b", text)
+        if m:
+            mo, d = int(m.group(1)), int(m.group(2))
+            y = int(m.group(3)) if m.group(3) else default_year
+        else:
+            m = re.search(r"([A-Za-z]{3,})\.?\s+(\d{1,2}),?\s*(\d{4})?", text)
+            if not m or m.group(1)[:3].lower() not in _MONTHS:
+                return None
+            mo, d = _MONTHS.index(m.group(1)[:3].lower()) + 1, int(m.group(2))
+            y = int(m.group(3)) if m.group(3) else default_year
+    if y is None:
+        return None
+    if y < 100:
+        y += 2000
+    try:
+        return date(y, mo, d)
+    except ValueError:
+        return None
+
+
+# Where each layout keeps the day's first in and last out (canonical slot names).
+_IN_SLOTS = ("time_in", "first_in", "m_in", "a_in", "e_in", "reg_in", "s1_in")
+_OUT_SLOTS = ("time_out", "final_out", "e_out", "a_out", "m_out", "reg_out", "s1_out")
+
+
+def day_from_row(values: dict, default_year: int | None = None) -> "DayInput | None":
+    """One extracted row (slot -> text) -> a DayInput; None when it has no readable date."""
+    d = parse_date(values.get("date"), default_year)
+    if d is None:
+        return None
+    t_in = next((values[k] for k in _IN_SLOTS if parse_time(values.get(k)) is not None), None)
+    t_out = next((values[k] for k in _OUT_SLOTS if parse_time(values.get(k)) is not None), None)
+    return DayInput(d, str(values.get("schedule") or ""), t_in, t_out,
+                    remarks=str(values.get("remarks") or ""),
+                    holiday_pay=values.get("holiday_pay"))
+
+
 # ── per-day calculation ─────────────────────────────────────────────────────
 
 def _overlap(a0: int, a1: int, b0: int, b1: int) -> int:
@@ -220,7 +269,9 @@ class DayInput:
     schedule: str = ""
     time_in: object = None
     time_out: object = None
-    tag: str = ""
+    tag: str = ""                 # a Remarks tag already decided (template, review screen)
+    remarks: str = ""             # handwritten marks read off the scan: WDO, SPL, OT ...
+    holiday_pay: object = None    # what the sheet printed in HOLIDAY PAY
 
 
 @dataclass
@@ -364,6 +415,118 @@ def calculate_employee(name: str, days: list[DayInput], profile: Profile = CHICK
             totals[col] += v
         flags.extend(f"{r.date.isoformat()}: {f}" for f in r.flags)
     return EmployeeResult(name=name, days=results, totals=totals, flags=flags)
+
+
+# ── Remarks tag suggestions (phase 2) ───────────────────────────────────────
+
+@dataclass
+class Suggestion:
+    tag: str             # "" = regular day
+    reason: str
+    sure: bool           # True: pre-filled on the review screen; False: shown as a hint only
+
+
+def _marks(remarks) -> set[str]:
+    words = set(re.findall(r"[A-Z]+", str(remarks or "").upper()))
+    out = set()
+    if words & {"WDO", "SHWDO", "LHWDO"} or "DAYOFF" in str(remarks or "").upper().replace(" ", ""):
+        out.add("WDO")
+    if words & {"SPL", "SH", "SPECIAL", "SHWDO"}:
+        out.add("SH")
+    if words & {"LH", "LEGAL", "LEG", "LHWDO", "REGULAR"}:
+        out.add("LH")
+    return out
+
+
+def _amount(value) -> float:
+    try:
+        return float(str(value).replace(",", "").strip() or 0)
+    except ValueError:
+        return 0.0
+
+
+def suggest_tags(days: list[DayInput], profile: Profile = CHICKEN_24,
+                 extra_holidays: dict | None = None) -> dict[date, Suggestion]:
+    """A suggested Remarks tag for every worked day that needs one, with its reason.
+
+    Sure suggestions come from the holiday calendar and from the schedule saying
+    RD; a handwritten WDO is sure too (the checker wrote it). Weaker evidence
+    (holiday pay or a holiday mark on a date that is not a national holiday, or
+    working a weekday that is a rest day in the other week) is only a hint.
+    """
+    import holidays as hol
+
+    rest_weekdays: dict[int, list[date]] = {}
+    for d in days:
+        if parse_schedule(d.schedule, profile).kind == "rest":
+            rest_weekdays.setdefault(d.date.weekday(), []).append(d.date)
+
+    out: dict[date, Suggestion] = {}
+    for d in days:
+        worked = parse_time(d.time_in) is not None and parse_time(d.time_out) is not None
+        if not worked:
+            continue
+        sched = parse_schedule(d.schedule, profile)
+        marks = _marks(d.remarks)
+        rest_day = sched.kind == "rest" or "WDO" in marks
+        rest_why = ("schedule says RD" if sched.kind == "rest"
+                    else "WDO written on the scan") if rest_day else ""
+        cal = hol.holiday(d.date, extra_holidays)
+        if cal:
+            kind, name = cal
+            base = "LH" if kind == hol.REGULAR else "SH"
+            tag = base + ("WDO" if rest_day else "")
+            why = f"{name} ({'regular holiday' if base == 'LH' else 'special non-working day'})"
+            out[d.date] = Suggestion(tag, why + (f", and {rest_why}" if rest_day else ""), True)
+        elif marks & {"SH", "LH"} or _amount(d.holiday_pay) > 0:
+            base = "LH" if "LH" in marks else "SH"
+            evidence = "holiday mark on the scan" if marks & {"SH", "LH"} else "holiday pay printed"
+            out[d.date] = Suggestion(base + ("WDO" if rest_day else ""),
+                                     f"{evidence}, but {d.date:%d %b} is not a national holiday:"
+                                     " a local holiday?", False)
+        elif rest_day:
+            out[d.date] = Suggestion("WDO", rest_why.capitalize(), True)
+        else:
+            others = [x for x in rest_weekdays.get(d.date.weekday(), []) if x != d.date]
+            if others and sched.kind == "shift":
+                out[d.date] = Suggestion("WDO", f"{d.date:%A} was a rest day on "
+                                         f"{others[0]:%d %b}: a rest day worked?", False)
+    return out
+
+
+@dataclass
+class ReviewResult:
+    employee: EmployeeResult
+    suggestions: dict[date, Suggestion]
+    tags: dict[date, str]          # the tag each day was calculated with
+
+
+def review_employee(name: str, days: list[DayInput], profile: Profile = CHICKEN_24,
+                    confirmed: dict[date, str] | None = None,
+                    extra_holidays: dict | None = None) -> ReviewResult:
+    """Suggest tags, apply them under the team's confirmed ones, and calculate.
+
+    Precedence per day: a tag the team confirmed on the review screen, then a tag
+    the input already carries, then a sure suggestion. Hints never apply on
+    their own.
+    """
+    import holidays as hol
+    confirmed = confirmed or {}
+    suggestions = suggest_tags(days, profile, extra_holidays)
+    tagged = []
+    for d in days:
+        if d.date in confirmed:
+            tag = confirmed[d.date]
+        elif normalize_tag(d.tag):
+            tag = d.tag
+        elif d.date in suggestions and suggestions[d.date].sure:
+            tag = suggestions[d.date].tag
+        else:
+            tag = ""
+        tagged.append(DayInput(d.date, d.schedule, d.time_in, d.time_out, tag,
+                               d.remarks, d.holiday_pay))
+    emp = calculate_employee(name, tagged, profile, hol.legal_holidays(extra_holidays))
+    return ReviewResult(emp, suggestions, {d.date: normalize_tag(d.tag) for d in tagged})
 
 
 def _ulh(holiday: date, by_date: dict) -> bool | None:

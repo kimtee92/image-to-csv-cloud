@@ -164,6 +164,91 @@ def test_employee_totals_add_up():
     assert list(t) == tk.COLUMNS
 
 
+def test_holiday_calendar():
+    """Proclamation 1006 (2026) and 1427 (2027)."""
+    import holidays as hol
+    assert hol.holiday(date(2026, 11, 1))[0] == hol.SPECIAL
+    assert hol.holiday(date(2026, 11, 2))[0] == hol.SPECIAL          # additional special day
+    assert hol.holiday(date(2026, 11, 30))[0] == hol.REGULAR
+    assert hol.holiday(date(2026, 8, 31))[0] == hol.REGULAR          # last Monday of August
+    assert hol.holiday(date(2027, 8, 30))[0] == hol.REGULAR
+    assert hol.holiday(date(2026, 2, 25)) is None                    # special WORKING day
+    assert date(2026, 12, 25) in hol.legal_holidays()
+
+
+def suggest(days):
+    return tk.suggest_tags(days)
+
+
+def test_suggest_calendar_holidays():
+    nov1, nov30 = date(2026, 11, 1), date(2026, 11, 30)
+    s = suggest([DayInput(nov1, "12-10", "12:00", "22:00"), DayInput(nov30, "10-8", "10:00", "20:00")])
+    assert (s[nov1].tag, s[nov1].sure) == ("SH", True)
+    assert (s[nov30].tag, s[nov30].sure) == ("LH", True)
+
+
+def test_suggest_holiday_on_rest_day():
+    nov1 = date(2026, 11, 1)
+    assert suggest([DayInput(nov1, "RD", "10:00", "20:00")])[nov1].tag == "SHWDO"
+    assert suggest([DayInput(nov1, "10-8", "10:00", "20:00", remarks="WDO")])[nov1].tag == "SHWDO"
+
+
+def test_suggest_wdo():
+    d = date(2026, 11, 5)
+    assert (suggest([DayInput(d, "RD", "9:00", "19:00")])[d].tag, True) == ("WDO", True)
+    s = suggest([DayInput(d, "9-7", "9:00", "19:00", remarks="WDO")])[d]   # handwritten on the scan
+    assert (s.tag, s.sure) == ("WDO", True)
+
+
+def test_suggest_hints_are_not_applied():
+    d = date(2026, 11, 5)
+    s = suggest([DayInput(d, "9-7", "9:00", "19:00", remarks="SPL")])[d]
+    assert (s.tag, s.sure) == ("SH", False) and "local holiday" in s.reason
+    assert suggest([DayInput(d, "9-7", "9:00", "19:00", holiday_pay="180")])[d].sure is False
+    r = tk.review_employee("D", [DayInput(d, "9-7", "9:00", "19:00", remarks="SPL")])
+    assert r.tags[d] == "" and r.employee.totals["SPL. HOL."] == 0
+
+
+def test_suggest_rest_day_pattern_hint():
+    """Worked on a weekday that was RD the week before: a hint, not a tag."""
+    thu1, thu2 = date(2026, 10, 29), date(2026, 11, 5)
+    s = suggest([DayInput(thu1, "RD"), DayInput(thu2, "9-7", "9:00", "19:00")])
+    assert (s[thu2].tag, s[thu2].sure) == ("WDO", False)
+
+
+def test_review_confirmed_tag_wins():
+    nov1 = date(2026, 11, 1)
+    days = [DayInput(nov1, "10-8", "10:00", "20:00")]
+    assert tk.review_employee("E", days).employee.totals["SPL. HOL."] == 1
+    r = tk.review_employee("E", days, confirmed={nov1: "SHWDO"})
+    assert r.employee.totals["SPL. HOL. / WDO"] == 1 and r.employee.totals["SPL. HOL."] == 0
+
+
+def test_review_ulh_from_calendar():
+    """31 Aug 2026 (regular holiday, Monday): rest day Sunday, worked Saturday -> ULH."""
+    days = [DayInput(date(2026, 8, 29), "10-8", "10:00", "20:00"),
+            DayInput(date(2026, 8, 30), "RD"), DayInput(date(2026, 8, 31), "10-8")]
+    assert tk.review_employee("F", days).employee.totals["U.LEG. HOL."] == 1
+
+
+def test_parse_date_forms():
+    for text in ("10/26/26", "10/26/2026", "2026-10-26", "Oct 26, 2026", "10-26-26"):
+        assert tk.parse_date(text) == date(2026, 10, 26), text
+    assert tk.parse_date("10/26", 2026) == date(2026, 10, 26)
+    assert tk.parse_date("TOTAL") is None
+
+
+def test_day_from_row_layouts():
+    """In/out sheet slots and DTR (morning/afternoon/evening) slots both give in + last out."""
+    a = tk.day_from_row({"date": "11/5/26", "schedule": "9-7", "time_in": "9:00",
+                         "time_out": "19:00", "remarks": "WDO", "holiday_pay": "180"})
+    assert (a.time_in, a.time_out, a.remarks, a.schedule) == ("9:00", "19:00", "WDO", "9-7")
+    b = tk.day_from_row({"date": "11/5/26", "m_in": "9:00", "m_out": "13:00", "a_in": "14:00",
+                         "a_out": "18:00", "e_in": "", "e_out": "19:00"})
+    assert (b.time_in, b.time_out) == ("9:00", "19:00")
+    assert tk.day_from_row({"date": "", "time_in": "9:00"}) is None
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

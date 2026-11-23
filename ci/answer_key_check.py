@@ -112,7 +112,11 @@ def main() -> int:
     ap.add_argument("key")
     ap.add_argument("--client", default="oppa_foods")
     ap.add_argument("--days", action="store_true", help="print each employee's flags")
+    ap.add_argument("--suggest", action="store_true",
+                    help="ignore the key's Remarks tags and compare the engine's own suggestions with them")
     args = ap.parse_args()
+    if args.suggest:
+        return suggest_report(args)
     profile = tk.PROFILES[args.client]
     known_diffs = load_known(args.key)
     sheets = load_sheets(args.key)
@@ -151,6 +155,30 @@ def main() -> int:
                 print(f"          flag {f}")
     print(f"{len(staff)} employees, {checked} values checked: {failures} unexplained, {known} known")
     return 1 if failures else 0
+
+
+def suggest_report(args) -> int:
+    """How many of the key's tags the suggestions recover on their own (no scan marks here)."""
+    profile = tk.PROFILES[args.client]
+    staff = employees(load_sheets(args.key)["Timekeeping"])
+    right = wrong = 0
+    for name, days in staff.items():
+        stripped = [tk.DayInput(d.date, d.schedule, d.time_in, d.time_out) for d in days]
+        r = tk.review_employee(name, stripped, profile)
+        for d in days:
+            want = tk.normalize_tag(d.tag)
+            got = r.tags[d.date]
+            if not (tk.parse_time(d.time_in) is not None and tk.parse_time(d.time_out) is not None):
+                continue
+            if want == got:
+                right += bool(want)
+                continue
+            wrong += 1
+            s = r.suggestions.get(d.date)
+            hint = f"  (hint: {s.tag}, {s.reason})" if s and not s.sure else ""
+            print(f"  {name[:28]:28} {d.date}  key {want or '(blank)':6} suggested {got or '(blank)':6}{hint}")
+    print(f"tagged days recovered: {right}; days that differ: {wrong}")
+    return 0
 
 
 if __name__ == "__main__":

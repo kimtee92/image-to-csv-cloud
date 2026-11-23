@@ -31,7 +31,7 @@ SLOTS = [
     "s2_in", "s2_out", "s2_total",
     "s3_in", "s3_out", "s3_total",
     "ot_in", "ot_out", "ot_total",
-    "final_out", "days_hrs", "ot_hrs", "reason",
+    "final_out", "days_hrs", "ot_hrs", "reason", "remarks",
 ]
 
 # ── input layouts ─────────────────────────────────────────────────────────
@@ -93,12 +93,14 @@ LAYOUTS: dict[str, dict] = {
     "inout": {
         "label": "Simple in / out payroll sheet",
         "headers": [
-            "DATE", "DAY", "TIME IN", "TIME OUT", "BREAK (HR)", "NORMAL", "OT HRS",
-            "HOLIDAY PAY", "HOLIDAY+OT", "TOTAL", "DEDUCTIONS", "NET TOTAL",
+            "DATE", "DAY", "SCHEDULE", "TIME IN", "TIME OUT", "BREAK (HR)", "NORMAL",
+            "OT HRS", "HOLIDAY PAY", "HOLIDAY+OT", "TOTAL", "DEDUCTIONS", "NET TOTAL",
+            "REMARKS",
         ],
         "slots": [
-            "date", "day", "s1_in", "final_out", "break_hrs", "normal", "ot_hrs",
-            "holiday_pay", "holiday_ot", "total", "deductions", "net_total",
+            "date", "day", "schedule", "s1_in", "final_out", "break_hrs", "normal",
+            "ot_hrs", "holiday_pay", "holiday_ot", "total", "deductions", "net_total",
+            "remarks",
         ],
         "sections": [],
     },
@@ -238,7 +240,10 @@ CLIENTS: dict[str, dict] = {
     "tokyo":       {"label": "Tokyo",                "layout": "dtr",       "template": "tokyo"},
     "trinity":     {"label": "Trinity",              "layout": "dtr",       "template": "trinity"},
     "sm_asinan":   {"label": "SM Asinan",            "layout": "dtr",       "template": "sm_asinan"},
-    "oppa_foods":  {"label": "24 Chicken — Oppa Foods", "layout": "dtr",    "template": "oppa_foods"},
+    # Oppa Foods' DTRs are the same in/out payroll sheet as Peak 24's, plus a
+    # SCHEDULE column. The DTR (morning/afternoon/evening) prompt forced six time
+    # columns onto a one-punch-pair sheet and dropped the schedule.
+    "oppa_foods":  {"label": "24 Chicken — Oppa Foods", "layout": "inout",  "template": "oppa_foods"},
     "peak24":      {"label": "24 Chicken — Peak 24", "layout": "inout",     "template": "peak24"},
     "baobab":      {"label": "Baobab",               "layout": "dtr",       "template": "baobab"},
     "bikezilla":   {"label": "Bikezilla",            "layout": "dtr",       "template": "bikezilla"},
