@@ -2896,9 +2896,25 @@ class DTRWorkbookFile(BaseModel):
     flagged_rows: list[Any] = []   # row indices the time check couldn't verify
 
 
+class TimekeepingTag(BaseModel):
+    employee: int             # index into files
+    date: str                 # YYYY-MM-DD
+    tag: str                  # "" (regular), WDO, SH, SHWDO, LH, LHWDO, ULH
+
+
+class TimekeepingHoliday(BaseModel):
+    date: str                 # YYYY-MM-DD
+    kind: str = "special"     # "special" or "regular"
+    name: str = "Local holiday"
+
+
 class DTRWorkbookRequest(BaseModel):
     files: list[DTRWorkbookFile] = []
     client: str = ""          # which client's workbook template to fill
+    # For clients the app calculates (timekeeping.PROFILES): the review screen's
+    # confirmed tags and local holidays, so the export matches what was reviewed.
+    tags: list[TimekeepingTag] = []
+    holidays: list[TimekeepingHoliday] = []
 
 
 @app.post("/api/pdf-info")
@@ -2981,12 +2997,40 @@ async def dtr_workbook(req: DTRWorkbookRequest):
                     {slot: (row[i] if i < len(row) else "")
                      for i, slot in enumerate(slots)}))
             blocks.append({"name": f["name"], "rows": rows})
+
+        # Clients the app calculates: every computed column is written as a value
+        # (the template's formulas are replaced), from the same engine run and the
+        # same confirmed tags as the review screen.
+        engine_notes: list[str] = []
+        client_key = (req.client or "").strip().lower()
+        if client_key in timekeeping.PROFILES and tpl.get("computed"):
+            profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays)
+            flagged = hints = 0
+            for idx, (block, (review, days, _)) in enumerate(zip(blocks, reviews)):
+                by_date = {r.date: r for r in review.employee.days}
+                year = next((d.date.year for d in days), None)
+                for row in block["rows"]:
+                    d = timekeeping.parse_date(row.get("date"), year)
+                    res = by_date.get(d) if d else None
+                    if res is not None:
+                        row["__cells__"] = timekeeping.template_cells(res, tpl["computed"], profile)
+                flagged += sum(1 for r in review.employee.days if r.flags)
+                hints += sum(1 for dt, s in review.suggestions.items()
+                             if not s.sure and dt not in (confirmed.get(idx) or {})
+                             and review.tags.get(dt) != s.tag)
+            if flagged:
+                engine_notes.append(f"{flagged} day(s) are flagged for review; check them in "
+                                    "Review timekeeping before payroll.")
+            if hints:
+                engine_notes.append(f"{hints} tag hint(s) not yet decided in Review timekeeping.")
+
         path = str(Path(__file__).resolve().parent / "templates" / tpl["file"])
         try:
             content, warnings = xlsx_fill.fill(path, blocks, tpl)
         except Exception as e:
             logger.exception("client workbook fill failed")
             raise HTTPException(500, f"Could not fill the workbook: {e}")
+        warnings = engine_notes + warnings
         label = client_registry.get_client(req.client)["label"]
         return Response(
             content=content,
@@ -3009,23 +3053,62 @@ async def dtr_workbook(req: DTRWorkbookRequest):
 
 # ── Timekeeping engine (computed columns, tag review) ─────────────────────────
 
-class TimekeepingTag(BaseModel):
-    employee: int             # index into files
-    date: str                 # YYYY-MM-DD
-    tag: str                  # "" (regular), WDO, SH, SHWDO, LH, LHWDO, ULH
-
-
-class TimekeepingHoliday(BaseModel):
-    date: str                 # YYYY-MM-DD
-    kind: str = "special"     # "special" or "regular"
-    name: str = "Local holiday"
-
-
 class TimekeepingRequest(BaseModel):
     client: str = ""
     files: list[DTRWorkbookFile] = []
     tags: list[TimekeepingTag] = []          # tags the team confirmed on the review screen
     holidays: list[TimekeepingHoliday] = []  # local holidays for this branch
+
+
+def _engine_reviews(client_key: str, files: list, tags: list, holidays: list):
+    """Run a batch through the client's timekeeping rules.
+
+    Returns (profile, [(review, days, skipped_rows) per file], confirmed tags).
+    Shared by the review endpoint and the Excel export, so both always calculate
+    the same way from the same tags.
+    """
+    profile = timekeeping.PROFILES[client_key]
+    layout_name = (client_registry.get_client(client_key) or {}).get("layout")
+    mapper, _, _ = _LAYOUT_MAPPERS.get(layout_name, (None, None, None))
+    if mapper is None:
+        raise HTTPException(400, f"No input layout for {client_key}.")
+    extra: dict[date, tuple[str, str]] = {}
+    for h in holidays or []:
+        d = timekeeping.parse_date(h.date)
+        if d:
+            extra[d] = (holidays_cal.REGULAR if h.kind.lower().startswith("reg") else holidays_cal.SPECIAL,
+                        h.name or "Local holiday")
+    confirmed: dict[int, dict[date, str]] = {}
+    for t in tags or []:
+        d = timekeeping.parse_date(t.date)
+        if d:
+            confirmed.setdefault(t.employee, {})[d] = timekeeping.normalize_tag(t.tag)
+
+    reviews = []
+    for idx, f in enumerate(files):
+        headers = [str(h) for h in (f.headers or [])]
+        rows = [[str(c) if c is not None else "" for c in r]
+                for r in (f.rows or []) if isinstance(r, list)]
+        while rows and _looks_like_header_row(rows[0]):
+            rows.pop(0)
+        mapping = mapper(headers)
+        # Forms print a 2-digit year or none; take the batch's year from any row that has one.
+        year = next((d.year for r in rows
+                     for d in [timekeeping.parse_date(r[mapping["date"]])]
+                     if "date" in mapping and mapping["date"] < len(r) and d), None)
+        days: list[timekeeping.DayInput] = []
+        skipped = 0
+        for r in rows:
+            values = {slot: r[i] for slot, i in mapping.items() if i < len(r)}
+            day = timekeeping.day_from_row(values, year)
+            if day is None:
+                skipped += bool("".join(r).strip())
+                continue
+            days.append(day)
+        review = timekeeping.review_employee(
+            f.name or f.file or f"Employee {idx + 1}", days, profile, confirmed.get(idx), extra)
+        reviews.append((review, days, skipped))
+    return profile, reviews, confirmed
 
 
 @app.get("/api/timekeeping/clients")
@@ -3043,51 +3126,13 @@ async def timekeeping_compute(req: TimekeepingRequest):
     DTR Summary's 26 columns. Nothing here touches Excel.
     """
     client_key = (req.client or "").strip().lower()
-    profile = timekeeping.PROFILES.get(client_key)
-    if profile is None:
+    if timekeeping.PROFILES.get(client_key) is None:
         label = (client_registry.get_client(client_key) or {}).get("label") or client_key or "this client"
         raise HTTPException(400, f"The app doesn't calculate {label}'s columns yet.")
-    layout_name = (client_registry.get_client(client_key) or {}).get("layout")
-    mapper, canon, _ = _LAYOUT_MAPPERS.get(layout_name, (None, None, None))
-    if mapper is None:
-        raise HTTPException(400, f"No input layout for {client_key}.")
-
-    extra: dict[date, tuple[str, str]] = {}
-    for h in req.holidays:
-        d = timekeeping.parse_date(h.date)
-        if d:
-            extra[d] = (holidays_cal.REGULAR if h.kind.lower().startswith("reg") else holidays_cal.SPECIAL,
-                        h.name or "Local holiday")
-    confirmed: dict[int, dict[date, str]] = {}
-    for t in req.tags:
-        d = timekeeping.parse_date(t.date)
-        if d:
-            confirmed.setdefault(t.employee, {})[d] = timekeeping.normalize_tag(t.tag)
+    profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays)
 
     out = []
-    for idx, f in enumerate(req.files):
-        headers = [str(h) for h in (f.headers or [])]
-        rows = [[str(c) if c is not None else "" for c in r]
-                for r in (f.rows or []) if isinstance(r, list)]
-        while rows and _looks_like_header_row(rows[0]):
-            rows.pop(0)
-        mapping = mapper(headers)
-        # Forms print a 2-digit year or none; take the batch's year from any row that has one.
-        days: list[timekeeping.DayInput] = []
-        skipped = 0
-        year = next((d.year for r in rows
-                     for d in [timekeeping.parse_date(r[mapping["date"]])]
-                     if "date" in mapping and mapping["date"] < len(r) and d), None)
-        for r in rows:
-            values = {slot: r[i] for slot, i in mapping.items() if i < len(r)}
-            day = timekeeping.day_from_row(values, year)
-            if day is None:
-                skipped += bool("".join(r).strip())
-                continue
-            days.append(day)
-        review = timekeeping.review_employee(
-            f.name or f.file or f"Employee {idx + 1}", days, profile,
-            confirmed.get(idx), extra)
+    for idx, (f, (review, days, skipped)) in enumerate(zip(req.files, reviews)):
         emp = review.employee
         by_date = {d.date: d for d in days}
         day_out = []

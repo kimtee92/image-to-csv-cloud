@@ -342,6 +342,27 @@ class _Sheet:
         if c.get("t"):
             del c.attrib["t"]
 
+    def overwrite(self, letter: str, n: int, value) -> None:
+        """Replace a cell's content, formula included, keeping its style.
+
+        Only for columns the app calculates itself (see fill's `__cells__`). Call
+        unshare_formulas() first: a shared-formula master overwritten in place
+        would leave the rest of its group pointing at nothing.
+        """
+        c = self.cell(letter, n)
+        self._clear(c)
+        if value is None or value == "":
+            return
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            v = ET.SubElement(c, _q("v"))
+            v.text = repr(float(value))
+        else:
+            c.set("t", "inlineStr")
+            is_el = ET.SubElement(c, _q("is"))
+            t = ET.SubElement(is_el, _q("t"))
+            t.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+            t.text = str(value)
+
     def write(self, letter: str, n: int, value, is_time: bool = False) -> None:
         """Write a value, keeping whatever style the template already had here.
 
@@ -768,6 +789,13 @@ def fill(template_path: str, blocks: list[dict], cfg: dict,
         log.info("rebuilt %d formula cell(s) missing from the template: %s",
                  len(healed), ", ".join(healed[:12]))
 
+    # Columns the app calculated itself (the timekeeping engine) arrive per row as
+    # "__cells__": {letter: value}. They replace the template's formulas outright,
+    # so spell shared formulas out first: overwriting a group's master in place
+    # would leave the rest of the group pointing at nothing.
+    if any(r.get("__cells__") for b in blocks for r in (b.get("rows") or [])):
+        sheet.unshare_formulas()
+
     for i, block in enumerate(blocks):
         head = first_block + stride * i
         first_row = head + 2
@@ -809,6 +837,8 @@ def fill(template_path: str, blocks: list[dict], cfg: dict,
                 spot = next((L for L in note_cols if not str(values.get(columns[L]) or "").strip()), None)
                 if spot:
                     sheet.write(spot, r, note)
+            for letter, value in (values.get("__cells__") or {}).items():
+                sheet.overwrite(letter, r, value)
 
         sheet.drop_cached_values(head, last_row)
 
@@ -855,6 +885,29 @@ def fill(template_path: str, blocks: list[dict], cfg: dict,
             widened += hits
         if widened:
             log.info("stretched %d lookup range(s) to reach %d employees", widened, len(blocks))
+
+    # A summary sheet with a fixed number of employee rows (24 Chicken's DTR
+    # Summary: 40) looks each row up by employee number. Rows past the batch would
+    # look up a block that doesn't exist and show #N/A, which then poisons the
+    # TOTAL row, so they are blanked; a batch longer than the summary is reported.
+    summary = cfg.get("summary")
+    if summary:
+        with zipfile.ZipFile(template_path) as z:
+            spath = _sheet_path(z, summary["sheet"])
+        _preserve_prefixes(parts[spath])
+        s_source = parts[spath]
+        s_root = ET.fromstring(s_source)
+        s_sheet = _Sheet(s_root, styles)
+        s_sheet.unshare_formulas()
+        last_col = col_index(summary["last_col"])
+        room = summary["last_row"] - summary["first_row"] + 1
+        for r in range(summary["first_row"] + len(blocks), summary["last_row"] + 1):
+            for ci in range(1, last_col + 1):
+                s_sheet.overwrite(_col_letters(ci), r, "")
+        parts[spath] = _restore_ns_decls(s_source, ET.tostring(s_root, encoding="utf-8", xml_declaration=True))
+        if len(blocks) > room:
+            warnings.append(f"The {summary['sheet']} has rows for {room} employees; the other "
+                            f"{len(blocks) - room} are on the {cfg['sheet']} sheet only.")
 
     # The export drops every cached result and forces a full recalculation, so
     # each formula has to be one the recipient's Excel can evaluate. DPAM's

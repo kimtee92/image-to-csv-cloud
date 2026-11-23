@@ -311,6 +311,7 @@ class DayResult:
     worked: bool = False
     late: int = 0
     undertime: int = 0
+    worked_minutes: int = 0                   # time out - time in, as punched
     ot: int = 0                               # minutes, already rounded
     nd: int = 0
     nd_ot: int = 0
@@ -369,6 +370,7 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
 
     start, end = sched.start, sched.end
     res.worked = True
+    res.worked_minutes = t_out - t_in
     if abs(t_in - start) >= profile.off_schedule_flag:
         res.flags.append(f"time in {t_in // 60}:{t_in % 60:02d} is "
                          f"{abs(t_in - start)} mins off the {start // 60}:{start % 60:02d} start")
@@ -449,6 +451,36 @@ def calculate_employee(name: str, days: list[DayInput], profile: Profile = CHICK
             totals[col] += v
         flags.extend(f"{r.date.isoformat()}: {f}" for f in r.flags)
     return EmployeeResult(name=name, days=results, totals=totals, flags=flags)
+
+
+def template_cells(res: DayResult, computed: dict[str, str], profile: Profile = CHICKEN_24) -> dict[str, object]:
+    """One calculated day as {column letter: value} for a client template (phase 3).
+
+    `computed` maps letters to COLUMNS names or "_hours" (time out - time in),
+    "_schedule" (the shift as HH:MM-HH:MM) and "_tag" (the Remarks tag). Values use
+    the template's units: a credited day is the shift length as a fraction of a
+    day (its totals divide by 10 hrs), hours are hours / 24, Late/UT is minutes / 1440.
+    """
+    cells: dict[str, object] = {}
+    sched = res.schedule
+    for letter, key in computed.items():
+        if key == "_hours":
+            cells[letter] = res.worked_minutes / 1440 if res.worked else 0.0
+        elif key == "_schedule":
+            ok = res.worked and sched is not None and sched.start is not None
+            cells[letter] = (f"{sched.start // 60}:{sched.start % 60:02d}-"
+                             f"{(sched.end // 60) % 24}:{sched.end % 60:02d}") if ok else ""
+        elif key == "_tag":
+            cells[letter] = res.tag if (res.worked or res.tag == "ULH") else ""
+        elif key == "UT":
+            cells[letter] = res.columns.get("UT", 0) / 1440
+        elif key in DAY_COLUMNS:
+            cells[letter] = res.columns.get(key, 0) * profile.shift_minutes / 1440
+        elif key in COLUMNS:
+            cells[letter] = res.columns.get(key, 0) / 24
+        else:
+            raise KeyError(f"unknown computed column {key!r}")
+    return cells
 
 
 # ── Remarks tag suggestions (phase 2) ───────────────────────────────────────

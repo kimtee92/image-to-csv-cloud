@@ -445,6 +445,8 @@
             <p id="tk-status" class="text-xs mt-0.5" style="color:var(--aero-text3);"></p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="downloadDtrWorkbook()" class="text-xs px-3 py-1.5 text-white rounded-lg font-medium" style="background:linear-gradient(135deg,#1d7044,#2f9e63);"
+                    title="The client's timekeeping workbook with these calculated values and tags">Download Excel</button>
             <button onclick="downloadTimekeepingCsv()" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">Summary CSV</button>
             <button onclick="closeTimekeeping()" class="text-xs px-3 py-1.5 rounded-lg font-medium" style="background:var(--aero-surface);border:1px solid var(--aero-glass-border);color:var(--aero-text2);">Close</button>
           </div>
@@ -2543,6 +2545,20 @@
         return;
       }
 
+      // For clients the app calculates, send the tags and local holidays confirmed
+      // on the review screen, so the workbook carries exactly what was reviewed.
+      const body = { files, client: selectedClient };
+      if (tkClients.includes(selectedClient)) {
+        body.tags = [];
+        files.forEach((f, i) => {
+          for (const [key, tag] of Object.entries(tkTags)) {
+            const [fileName, date] = key.split('|');
+            if (fileName === f.file) body.tags.push({ employee: i, date, tag });
+          }
+        });
+        body.holidays = tkHolidays;
+      }
+
       const btn = document.getElementById('download-xlsx-btn');
       const label = document.getElementById('download-xlsx-label');
       const previous = label.textContent;
@@ -2552,7 +2568,7 @@
         const resp = await fetch('/api/dtr-workbook', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files, client: selectedClient }),
+          body: JSON.stringify(body),
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ detail: resp.statusText }));

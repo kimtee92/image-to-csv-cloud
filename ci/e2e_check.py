@@ -51,15 +51,18 @@ def post_json(url: str, payload: dict) -> dict:
 
 
 def employee_name(ocr: dict, fallback: str) -> str:
+    lines = []
     for line in ocr.get("ocr_text_lines") or []:
-        m = re.match(r"\s*(?:employee(?:'?s)?(?:\s+name)?|name)\s*:\s*(.+)", str(line), re.I)
+        lines += re.split(r"\\n|\n", str(line))       # some come back with literal "\n" inside
+    for line in lines:
+        m = re.match(r"\s*(?:employee(?:'?s)?(?:\s+name)?|name)\s*:\s*(.+)", line, re.I)
         if m and m.group(1).strip():
             return m.group(1).strip()
     return fallback
 
 
 def key_for(name: str, staff: dict) -> str | None:
-    """The key's employee for an extracted name; tolerant of a misread letter ("Jovilynn")."""
+    """The key's employee for an extracted name; tolerant of a misread letter ("Annna" for "Anna")."""
     import difflib
     norm = lambda s: re.sub(r"[^a-z ]", "", s.lower()).strip()  # noqa: E731
     keys = {norm(k): k for k in staff}

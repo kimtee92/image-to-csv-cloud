@@ -164,6 +164,24 @@ def test_employee_totals_add_up():
     assert list(t) == tk.COLUMNS
 
 
+def test_template_cells_units():
+    """Phase 3: values in the 24 Chicken template's own units (10-hr day, hours/24, minutes/1440)."""
+    from clients import TEMPLATES
+    comp = TEMPLATES["chicken24"]["computed"]
+    c = tk.template_cells(day("10-8", "10:00", "21:00"), comp)
+    assert abs(c["O"] - 600 / 1440) < 1e-12 and abs(c["P"] - 1 / 24) < 1e-12
+    assert abs(c["N"] - 660 / 1440) < 1e-12 and c["AP"] == "10:00-20:00" and c["AQ"] == ""
+    assert c["AN"] == 0 and c["W"] == 0
+    sh = tk.template_cells(day("10-8", "10:00", "20:30", tag="SH"), comp)
+    assert abs(sh["W"] - 600 / 1440) < 1e-12 and abs(sh["O"] - 600 / 1440) < 1e-12
+    assert abs(sh["X"] - 0.5 / 24) < 1e-12 and sh["P"] == 0 and sh["AQ"] == "SH"
+    late = tk.template_cells(day("10-8", "11:00", "20:00"), comp)
+    assert abs(late["AN"] - 120 / 1440) < 1e-12
+    off = tk.template_cells(day("RD", None, None), comp)
+    assert off["O"] == 0 and off["AP"] == "" and off["AQ"] == ""
+    assert set(comp.values()) - {"_hours", "_schedule", "_tag"} == set(tk.COLUMNS)
+
+
 def test_holiday_calendar():
     """Proclamation 1006 (2026) and 1427 (2027)."""
     import holidays as hol

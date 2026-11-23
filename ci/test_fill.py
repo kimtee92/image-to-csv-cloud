@@ -85,28 +85,59 @@ def test_too_many_punched_days_warns():
 def test_dash_in_time_cell_is_blank():
     """Peak 24 / Tokyo, Nov 2026: '-' for a no-punch day was written as text, and
     the day's hours and the block total came out #VALUE!."""
-    rows = [{"date": "7/11/26", "s1_in": "-", "final_out": "-"},
-            {"date": "7/12/26", "s1_in": "–", "final_out": "n/a"},
-            {"date": "7/13/26", "s1_in": "12:00", "final_out": "22:00"}]
-    got, _, cfg = fill("peak24", rows)
+    rows = [{"date": "7/11/26", "first_in": "-", "final_out": "-"},
+            {"date": "7/12/26", "first_in": "–", "final_out": "n/a"},
+            {"date": "7/13/26", "first_in": "12:00", "final_out": "22:00"}]
+    got, _, cfg = fill("chicken24", rows)
     first = cfg["first_block"] + 2
     for letter, slot in cfg["columns"].items():
         if slot.endswith("_in") or slot.endswith("_out"):
             for k in (0, 1):
                 v = got.get(f"{letter}{first + k}", "")
                 assert v == "", f"{letter}{first + k} = {v!r}, expected blank"
-    in_col = next(L for L, s in cfg["columns"].items() if s == "s1_in")
+    in_col = next(L for L, s in cfg["columns"].items() if s == "first_in")
     assert minutes(got.get(f"{in_col}{first + 2}")) == 12 * 60
 
 
 def test_short_month_unchanged():
     """A block with no more rows than it holds is written as-is, in order."""
-    rows = [{"date": f"7/{d}/26", "s1_in": "09:00", "final_out": "18:00"} for d in range(11, 27)]
-    got, warnings, cfg = fill("peak24", rows)
+    rows = [{"date": f"7/{d}/26", "first_in": "09:00", "final_out": "18:00"} for d in range(11, 27)]
+    got, warnings, cfg = fill("chicken24", rows)
     date_col = next(L for L, s in cfg["columns"].items() if s == "date")
     first = cfg["first_block"] + 2
     assert got.get(f"{date_col}{first}") == "7/11/26", got.get(f"{date_col}{first}")
     assert not warnings, warnings
+
+
+def formula_cells(data: bytes, sheet: str) -> set[str]:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    wb = ET.fromstring(z.read("xl/workbook.xml"))
+    rels = {r.get("Id"): r.get("Target") for r in ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))}
+    target = next(rels[s.get(RID)] for s in wb.find(NS + "sheets") if s.get("name") == sheet).lstrip("/")
+    part = target if target.startswith("xl/") else "xl/" + target
+    return {c.get("r") for c in ET.fromstring(z.read(part)).iter(NS + "c") if c.find(NS + "f") is not None}
+
+
+def test_engine_values_replace_formulas():
+    """Phase 3: calculated values replace the template's formulas; the DTR Summary
+    rows past the batch are blanked instead of showing #N/A."""
+    cfg = TEMPLATES["chicken24"]
+    row = {"date": "11/1/26", "schedule": "10-8", "first_in": "10:00", "final_out": "20:00",
+           "__cells__": {"O": 600 / 1440, "W": 600 / 1440, "AP": "10:00-20:00", "AQ": "SH"}}
+    data, _ = xlsx_fill.fill(str(ROOT / "app" / "templates" / cfg["file"]),
+                             [{"name": "TEST", "rows": [row]}], cfg)
+    first = cfg["first_block"] + 2
+    tk_formulas = formula_cells(data, cfg["sheet"])
+    for letter in ("O", "W", "AP"):
+        assert f"{letter}{first}" not in tk_formulas, f"{letter}{first} is still a formula"
+    got = cells(data, cfg["sheet"])
+    assert got.get(f"AQ{first}") == "SH" and abs(float(got[f"O{first}"]) - 600 / 1440) < 1e-9
+    assert f"O{first + 1}" in tk_formulas            # rows without values keep the template's formulas
+    s = cfg["summary"]
+    sum_formulas = formula_cells(data, s["sheet"])
+    assert f"B{s['first_row']}" in sum_formulas      # employee 1 is still looked up
+    for r in (s["first_row"] + 1, s["last_row"]):
+        assert not any(c in sum_formulas for c in (f"A{r}", f"B{r}", f"C{r}", f"AB{r}")), r
 
 
 if __name__ == "__main__":

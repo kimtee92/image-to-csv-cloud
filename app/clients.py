@@ -149,23 +149,31 @@ TEMPLATES: dict[str, dict] = {
         "columns": {"A": "date", "B": "day", "C": "first_in", "D": "s1_out",
                     "E": "s2_in", "F": "s2_out", "G": "s3_in", "H": "final_out"},
     },
-    "oppa_foods": {
-        "file": "oppa_foods.xlsx", "sheet": "Timekeeping",
-        "blocks": 15,
+    # 24 Chicken (Oppa Foods and Peak 24): DPAM's 26-column template from the
+    # Oct 26 - Nov 10, 2026 cut-off, blanked (no employee data) and its DTR Summary
+    # extended to 40 rows. The app calculates every computed column itself
+    # (app/timekeeping.py) and writes VALUES over the template's formulas, so the
+    # file needs no LET/XLOOKUP/SWITCH and opens the same in any Excel. Units are
+    # the template's own: a credited day is 10 hrs (its totals divide by 10), hours
+    # are fractions of a day, Late/UT is minutes / 1440.
+    "chicken24": {
+        "file": "chicken24.xlsx", "sheet": "Timekeeping",
+        "blocks": 10,
         "first_block": 4, "stride": 20, "rows_per_block": 16, "name_col": "C",
-        # The TOTAL HRS formula is IF(AND(IN<>"", OUT<>""), OUT - IN, 0) and reads only
-        # these two columns, so they take the day's first in and last out — not the
-        # literal MORNING IN / EVENING OUT boxes, which left every day without an
-        # evening punch at 0 hours (or negative, where OUT is a formula).
-        "columns": {"A": "schedule", "B": "date", "C": "day",
-                    "D": "first_in", "E": "s1_out", "F": "s2_in", "G": "s2_out",
-                    "H": "s3_in", "I": "final_out", "J": "ot_hrs", "K": "reason"},
-    },
-    "peak24": {
-        "file": "peak24.xlsx", "sheet": "Timekeeping",
-        "blocks": 15,
-        "first_block": 4, "stride": 20, "rows_per_block": 16, "name_col": "C",
-        "columns": {"A": "date", "B": "day", "C": "s1_in", "D": "final_out"},
+        # TOTAL HRS reads D (first in) and I (last out) only.
+        "columns": {"A": "schedule", "B": "date", "C": "day", "D": "first_in", "I": "final_out"},
+        "computed": {
+            "N": "_hours", "O": "DAYS", "P": "REG. OT", "Q": "NDF", "R": "NDF OT",
+            "S": "WDO", "T": "WDO OT", "U": "WDO NDF", "V": "WDO NDF OT",
+            "W": "SPL. HOL.", "X": "SPL. HOL. OT", "Y": "SPL. HOL. NDF", "Z": "SPL. HOL. NDF OT",
+            "AA": "SPL. HOL. / WDO", "AB": "SPL. HOL. / WDO OT",
+            "AC": "SPL. HOL. / WDO NDF", "AD": "SPL. HOL. / WDO NDF OT",
+            "AE": "LEG. HOL.", "AF": "LEG. HOL. OT", "AG": "LEG. HOL. NDF", "AH": "LEG. HOL. NDF OT",
+            "AI": "LEG. HOL. / WDO", "AJ": "LEG. HOL. / WDO OT",
+            "AK": "LEG. HOL. / WDO NDF", "AL": "LEG. HOL. / WDO NDF OT",
+            "AM": "U.LEG. HOL.", "AN": "UT", "AP": "_schedule", "AQ": "_tag",
+        },
+        "summary": {"sheet": "DTR Summary", "first_row": 4, "last_row": 43, "last_col": "AB"},
     },
     "miniso": {
         "file": "miniso.xlsx", "sheet": "Timekeeping",
@@ -243,8 +251,8 @@ CLIENTS: dict[str, dict] = {
     # Oppa Foods' DTRs are the same in/out payroll sheet as Peak 24's, plus a
     # SCHEDULE column. The DTR (morning/afternoon/evening) prompt forced six time
     # columns onto a one-punch-pair sheet and dropped the schedule.
-    "oppa_foods":  {"label": "24 Chicken — Oppa Foods", "layout": "inout",  "template": "oppa_foods"},
-    "peak24":      {"label": "24 Chicken — Peak 24", "layout": "inout",     "template": "peak24"},
+    "oppa_foods":  {"label": "24 Chicken — Oppa Foods", "layout": "inout",  "template": "chicken24"},
+    "peak24":      {"label": "24 Chicken — Peak 24", "layout": "inout",     "template": "chicken24"},
     "baobab":      {"label": "Baobab",               "layout": "dtr",       "template": "baobab"},
     "bikezilla":   {"label": "Bikezilla",            "layout": "dtr",       "template": "bikezilla"},
     "upson":       {"label": "Upson",                "layout": "dtr",       "template": "upson"},
