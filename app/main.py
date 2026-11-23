@@ -2231,10 +2231,18 @@ def _inout_instructions(user_prompt: str = "") -> str:
         '   sheet, emit "" for it rather than shifting the others left.',
         "5. Take care with 6 vs 8, 0 vs 8, 1 vs 7, 2 vs 7, 5 vs 6, 9 vs 4.",
         "6. REMARKS: words or codes handwritten on that row on top of the printed",
-        '   sheet, e.g. WDO, SPL, SH, LH, OT, "1 OT", REST DAY. Copy them as written,',
-        '   wherever on the row they were written. "" when there are none. Ticks,',
-        "   check marks and initials are not remarks.",
+        '   sheet, e.g. WDO, SPL, SH, LH, OT, "1 OT", "1 NDF", REST DAY. Copy them as',
+        '   written. "" when there are none. Ticks, check marks and initials are not remarks.',
+        "   Handwriting is often written over the OT HRS or HOLIDAY PAY cells: put it in",
+        "   REMARKS, and keep OT HRS and HOLIDAY PAY to the numbers the sheet PRINTS.",
         '7. HOLIDAY PAY and HOLIDAY+OT: copy what is printed, blank stays "".',
+        "8. NORMAL (9am-10PM) is usually printed as TWO sub-columns, hours then pay",
+        '   (e.g. "8 | 600"). Put only the hours in NORMAL; the pay has no column here.',
+        "   Keep counting columns from the printed header, so OT HRS stays OT HRS.",
+        "9. A number printed to the RIGHT of NET TOTAL, outside the grid (e.g. 50 or 60,",
+        "   an allowance), belongs to no column. Ignore it; it is NOT a remark.",
+        "10. Return one row for EVERY date printed in the DATE column, in order, even when",
+        "   handwriting covers the row. Never merge, skip or drop a printed date.",
     ]
     if user_prompt.strip():
         parts += ["", "Additional instructions for the rows:", user_prompt.strip()]

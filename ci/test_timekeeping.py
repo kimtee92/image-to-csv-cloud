@@ -249,6 +249,22 @@ def test_day_from_row_layouts():
     assert tk.day_from_row({"date": "", "time_in": "9:00"}) is None
 
 
+def test_marks_found_in_number_columns():
+    """Real scans: handwriting lands in HOLIDAY PAY / OT HRS; an allowance '60' lands in REMARKS."""
+    d = tk.day_from_row({"date": "11/1/26", "schedule": "10-8", "time_in": "10:00", "time_out": "20:00",
+                         "holiday_pay": "WDO | 180", "remarks": "60"})
+    assert "WDO" in d.remarks and "60" not in d.remarks and d.holiday_pay == "180"
+    assert tk.suggest_tags([d])[d.date].tag == "SHWDO"
+    plain = tk.day_from_row({"date": "11/5/26", "time_in": "9:00", "time_out": "19:00", "remarks": "50"})
+    assert plain.remarks == ""
+
+
+def test_dotted_schedule():
+    """'11.9' is how a smudged '11-9' comes back."""
+    s = tk.parse_schedule("11.9")
+    assert (s.kind, s.start, s.end) == ("shift", 660, 1260)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

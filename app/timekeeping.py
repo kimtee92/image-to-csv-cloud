@@ -148,6 +148,9 @@ class Schedule:
 def parse_schedule(text, profile: Profile = CHICKEN_24) -> Schedule:
     """'12-10' -> 12:00-22:00; '1-11' -> 13:00-23:00; '9:00-19:00' as written; RD etc. -> no shift."""
     raw = "" if text is None else str(text)
+    dotted = re.fullmatch(r"\s*(\d{1,2})\s*\.\s*(\d{1,2})\s*", raw)
+    if dotted:                                   # "11.9" is how a smudged "11-9" reads
+        raw = f"{dotted.group(1)}-{dotted.group(2)}"
     low = raw.strip().lower()
     if low in REST_DAY:
         return Schedule(None, None, "rest", raw)
@@ -229,16 +232,34 @@ _IN_SLOTS = ("time_in", "first_in", "m_in", "a_in", "e_in", "reg_in", "s1_in")
 _OUT_SLOTS = ("time_out", "final_out", "e_out", "a_out", "m_out", "reg_out", "s1_out")
 
 
+# Printed money/hours columns where a checker's handwriting also tends to land.
+_MARK_SLOTS = ("ot_hrs", "holiday_pay", "holiday_ot", "deductions", "normal", "total")
+_NUMBER = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
 def day_from_row(values: dict, default_year: int | None = None) -> "DayInput | None":
-    """One extracted row (slot -> text) -> a DayInput; None when it has no readable date."""
+    """One extracted row (slot -> text) -> a DayInput; None when it has no readable date.
+
+    Handwritten marks are taken from REMARKS and from any words that landed in
+    the printed number columns ("WDO | 180" in HOLIDAY PAY); a bare number in
+    REMARKS (an allowance printed beside the grid) is not a mark.
+    """
     d = parse_date(values.get("date"), default_year)
     if d is None:
         return None
     t_in = next((values[k] for k in _IN_SLOTS if parse_time(values.get(k)) is not None), None)
     t_out = next((values[k] for k in _OUT_SLOTS if parse_time(values.get(k)) is not None), None)
+    marks = [str(values.get("remarks") or "").strip()]
+    for k in _MARK_SLOTS:
+        text = str(values.get(k) or "")
+        if re.search(r"[A-Za-z]{2,}", text):
+            marks.append(text.strip())
+    marks = [m for m in marks if m and not re.fullmatch(r"[\d.,\s|-]+", m)]
+    pay_text = str(values.get("holiday_pay") or "")
+    pay = _NUMBER.search(pay_text.replace(",", ""))
     return DayInput(d, str(values.get("schedule") or ""), t_in, t_out,
-                    remarks=str(values.get("remarks") or ""),
-                    holiday_pay=values.get("holiday_pay"))
+                    remarks=" | ".join(dict.fromkeys(marks)),
+                    holiday_pay=pay.group(0) if pay else None)
 
 
 # ── per-day calculation ─────────────────────────────────────────────────────
@@ -485,7 +506,7 @@ def suggest_tags(days: list[DayInput], profile: Profile = CHICKEN_24,
                                      f"{evidence}, but {d.date:%d %b} is not a national holiday:"
                                      " a local holiday?", False)
         elif rest_day:
-            out[d.date] = Suggestion("WDO", rest_why.capitalize(), True)
+            out[d.date] = Suggestion("WDO", rest_why[:1].upper() + rest_why[1:], True)
         else:
             others = [x for x in rest_weekdays.get(d.date.weekday(), []) if x != d.date]
             if others and sched.kind == "shift":
