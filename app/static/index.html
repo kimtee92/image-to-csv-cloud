@@ -2630,13 +2630,7 @@
       // on the review screen, so the workbook carries exactly what was reviewed.
       const body = { files, client: selectedClient };
       if (tkClients.includes(selectedClient)) {
-        body.tags = [];
-        files.forEach((f, i) => {
-          for (const [key, tag] of Object.entries(tkTags)) {
-            const [fileName, date] = key.split('|');
-            if (fileName === f.file) body.tags.push({ employee: i, date, tag });
-          }
-        });
+        Object.assign(body, tkReviewInputs(files));
         body.holidays = tkHolidays;
       }
 
@@ -2699,6 +2693,7 @@
     // name + date so they survive a re-extraction of another file.
     let tkClients = [];
     let tkTags = {};          // "fileName|YYYY-MM-DD" -> tag ("" = regular)
+    let tkAdjust = {};        // "fileName|YYYY-MM-DD" -> Late/UT minutes added by hand (overbreak)
     let tkHolidays = [];      // [{date, kind, name}] local holidays for this batch
     let tkData = null;
     let tkOpen = {};          // employee index -> expanded
@@ -2747,20 +2742,14 @@
       const files = tkFiles();
       const status = document.getElementById('tk-status');
       if (!files.length) { status.textContent = 'No extracted sheets in this batch yet.'; return; }
-      const tags = [];
-      files.forEach((f, i) => {
-        for (const [key, tag] of Object.entries(tkTags)) {
-          const [fileName, date] = key.split('|');
-          if (fileName === f.file) tags.push({ employee: i, date, tag });
-        }
-      });
+      const { tags, adjustments } = tkReviewInputs(files);
       tkBusy = true;
       status.textContent = 'Calculating…';
       try {
         const resp = await fetch('/api/timekeeping', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client: selectedClient, files, tags, holidays: tkHolidays }),
+          body: JSON.stringify({ client: selectedClient, files, tags, adjustments, holidays: tkHolidays }),
         });
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -2773,6 +2762,29 @@
       } finally {
         tkBusy = false;
       }
+    }
+
+    // What the team set on the review screen, keyed to each file's position in this batch.
+    function tkReviewInputs(files) {
+      const tags = [], adjustments = [];
+      files.forEach((f, i) => {
+        for (const [key, tag] of Object.entries(tkTags)) {
+          const [fileName, date] = key.split('|');
+          if (fileName === f.file) tags.push({ employee: i, date, tag });
+        }
+        for (const [key, minutes] of Object.entries(tkAdjust)) {
+          const [fileName, date] = key.split('|');
+          if (fileName === f.file && minutes > 0) adjustments.push({ employee: i, date, minutes });
+        }
+      });
+      return { tags, adjustments };
+    }
+
+    function setTkAdjust(fileName, date, value) {
+      const minutes = Math.max(0, Math.round(Number(value) || 0));
+      if (minutes) tkAdjust[`${fileName}|${date}`] = minutes;
+      else delete tkAdjust[`${fileName}|${date}`];
+      computeTimekeeping();
     }
 
     function setTkTag(fileName, date, tag) {
@@ -2881,7 +2893,12 @@
             `<select onchange="setTkTag(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
             `style="background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);">${options}</select>${sug}</td>` +
             `<td ${td}>${[hours, credit].filter(Boolean).join(' · ')}</td>` +
-            `<td ${td}>${d.late + d.undertime ? (d.late + d.undertime) : ''}</td>` +
+            `<td ${td} style="white-space:nowrap;">${d.late + d.undertime ? (d.late + d.undertime) : ''}` +
+            (d.worked ? ` <input type="number" min="0" step="1" value="${d.extra_ut || ''}" placeholder="+min" ` +
+              `title="Late/UT minutes the times don't show (e.g. an overbreak); added to this day" ` +
+              `onchange="setTkAdjust(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
+              `style="width:4.5rem;background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);">` : '') +
+            `</td>` +
             `<td ${td} style="color:#d68a00;white-space:normal;">${d.flags.map(escapeHtml).join('<br>')}</td></tr>`;
         }
         detail += `</tbody></table></div></div>`;
@@ -2914,6 +2931,7 @@
       batchRotation = 0;
       batchRotationResolved = false;
       tkTags = {};
+      tkAdjust = {};
       tkHolidays = [];
       tkData = null;
       tkOpen = {};

@@ -158,6 +158,8 @@ TEMPLATES: dict[str, dict] = {
     # are fractions of a day, Late/UT is minutes / 1440.
     "chicken24": {
         "file": "chicken24.xlsx", "sheet": "Timekeeping",
+        # DPAM's 24 Nov template credits a day as 8 hrs (block totals divide by 8).
+        "day_minutes": 480,
         "blocks": 10,
         "first_block": 4, "stride": 20, "rows_per_block": 16, "name_col": "C",
         # TOTAL HRS reads D (first in) and I (last out) only.

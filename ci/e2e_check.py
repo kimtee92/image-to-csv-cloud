@@ -26,7 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 sys.path.insert(0, str(ROOT / "ci"))
 import timekeeping as tk  # noqa: E402
-from answer_key_check import employees, expected, load_sheets  # noqa: E402
+from answer_key_check import employees, expected, expected_from_blocks, load_sheets  # noqa: E402
 
 
 def post_multipart(url: str, fields: dict[str, str], file_path: pathlib.Path) -> dict:
@@ -69,7 +69,7 @@ def key_for(name: str, staff: dict) -> str | None:
     """The key's employee for an extracted name; tolerant of a misread letter ("Annna" for "Anna")."""
     import difflib
     norm = lambda s: re.sub(r"[^a-z ]", "", s.lower()).strip()  # noqa: E731
-    keys = {norm(k): k for k in staff}
+    keys = {norm(re.split(r"\\n|\n", k)[0]): k for k in staff}   # keys can hold pasted header text
     hit = difflib.get_close_matches(norm(name), list(keys), n=1, cutoff=0.75)
     return keys[hit[0]] if hit else None
 
@@ -100,7 +100,11 @@ def main() -> int:
 
     sheets = load_sheets(args.key)
     staff = employees(sheets["Timekeeping"])
-    want, headers = expected(sheets["DTR Summary"])
+    try:
+        want, headers = expected(sheets["DTR Summary"])
+    except (ValueError, StopIteration):
+        print("  (the key's DTR Summary is not readable (#N/A); using the Timekeeping block totals)")
+        want, headers = expected_from_blocks(sheets["Timekeeping"])
     rename = dict(zip(headers, tk.COLUMNS))
 
     files = []
@@ -135,6 +139,8 @@ def main() -> int:
                                     ("in", d["time_in"], k.time_in), ("out", d["time_out"], k.time_out)):
                 if field == "schedule":
                     a, b = re.sub(r"\s", "", str(got)).lower(), re.sub(r"\s", "", str(exp)).lower()
+                    if re.fullmatch(r"\d+am-\d+pm", b):     # the printed "Normal (9am-10PM)" header
+                        b = ""
                     same = a == b or (a in ("", "-") and b in ("", "-"))
                 else:
                     a, b = tk.parse_time(got), tk.parse_time(exp)

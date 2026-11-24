@@ -107,6 +107,29 @@ def expected(grid) -> tuple[dict[str, dict[str, float]], list[str]]:
     return result, [h for _, h in cols]
 
 
+def expected_from_blocks(grid) -> tuple[dict[str, dict[str, float]], list[str]]:
+    """Per-employee totals from the Timekeeping sheet's block rows ("NAME:" in B).
+
+    For a key whose DTR Summary came back #N/A (a lookup that didn't find the
+    names); the block's own total row holds the same 26 figures in O..AN.
+    """
+    letters = []
+    for i in range(15, 15 + len(tk.COLUMNS)):          # O .. AN
+        letters.append(chr(64 + i) if i <= 26 else "A" + chr(64 + i - 26))
+    result = {}
+    for (c, r), v in grid.items():
+        if c == "B" and str(v).strip().upper() == "NAME:" and str(grid.get(("C", r)) or "").strip():
+            name = str(grid[("C", r)]).split("\\n")[0].split("\n")[0].strip()
+            vals = {}
+            for L, col in zip(letters, tk.COLUMNS):
+                try:
+                    vals[col] = float(grid.get((L, r)) or 0)
+                except (TypeError, ValueError):
+                    vals[col] = float("nan")
+            result[name] = vals
+    return result, list(tk.COLUMNS)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("key")

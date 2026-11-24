@@ -93,10 +93,10 @@ def test_night_inside_shift_is_ndf():
     assert r.columns["NDF"] == 1.0 and r.columns["NDF OT"] == 0
 
 
-def test_ndf_keeps_one_hour_minimum():
-    """Rules sheet (open item with Dom): NDF from 1 hr."""
+def test_ndf_in_half_hour_steps():
+    """DPAM template, 24 Nov (settles the open item): NDF counts in 30-min steps, no 1-hr minimum."""
     r = day("12:30-22:30", "12:30", "22:30")
-    assert r.nd == 0                      # 30 mins of night time: under the minimum
+    assert r.nd == 30
 
 
 def test_tag_routes_hours_only_to_its_columns():
@@ -153,7 +153,8 @@ def test_peak24_shift_from_time_in():
     """Peak 24 has no schedule column: in by 9:30 -> 9-7, by 10:30 -> 10-8, ..."""
     r = tk.calculate_day(DayInput(D, "", "10:05", "20:00"), tk.PEAK_24)
     assert (r.schedule.start, r.schedule.end) == (600, 1200)
-    assert r.late == 5 and r.undertime == 5
+    # template: Late/UT is lateness only; a full 8 hrs from the start credits the whole day
+    assert r.late == 5 and r.undertime == 0 and r.columns["DAYS"] == 1
 
 
 def test_employee_totals_add_up():
@@ -414,9 +415,39 @@ def test_wdo_read_one_letter_off():
         assert "WDO" not in tk._marks(other), other
 
 
-def test_blank_schedule_is_not_called_unreadable():
-    r = tk.calculate_day(row(schedule="", time_in="11:00", time_out="21:00"))
-    assert "no schedule written; assumed 10 hrs from time in" in r.flags, r.flags
+def test_no_schedule_column_takes_the_shift_from_the_time_in():
+    """Aug 2026 Oppa Foods forms have no SCHEDULE column; DPAM's template takes the shift
+    from the time in (10:03 -> 10-8, 3 mins late), as Peak 24 always does."""
+    r = tk.calculate_day(row(schedule="", time_in="10:03", time_out="20:00"))
+    assert (r.schedule.start, r.late, r.undertime, r.columns["DAYS"]) == (600, 3, 0, 1), r
+    assert not r.flags, r.flags
+    written = tk.calculate_day(row(schedule="10-8", time_in="11:00", time_out="20:00"))
+    assert written.late + written.undertime == 120          # a written schedule keeps Dom's rule #2
+
+
+def test_short_day_from_the_ladder_is_part_of_a_day():
+    """Peak 24, 27 Aug: 11:00-13:00 is 2 of 8 hrs = 0.25 day (DPAM: "1.25 day" for the cut-off)."""
+    r = tk.calculate_day(DayInput(D, "", "11:00", "13:00"), tk.PEAK_24)
+    assert r.columns["DAYS"] == 0.25 and r.columns["UT"] == 0 and any("short day" in f for f in r.flags)
+
+
+def test_two_pm_shift_runs_to_midnight():
+    """Peak 24, 4 Sep: 14:00-0:00 is the new 14-24 shift: 2 hrs NDF inside it, no OT, not late."""
+    r = tk.calculate_day(DayInput(D, "", "14:00", "0:00"), tk.PEAK_24)
+    assert (r.schedule.start, r.schedule.end, r.late, r.ot, r.nd, r.nd_ot) == (840, 1440, 0, 0, 120, 0), r
+    assert tk.calculate_day(DayInput(D, "", "14:00", "24:00"), tk.PEAK_24).nd == 120
+
+
+def test_wdf_is_not_a_wdo():
+    """A scrawled "NDF OT" came back as "WDF OT"; only the O may be misread."""
+    assert "WDO" not in tk._marks("WDF OT") and "WDO" in tk._marks("WDD") and "WDO" in tk._marks("WD0")
+
+
+def test_template_day_unit_follows_the_template():
+    """DPAM's updated template totals day columns /8, the old one /10."""
+    comp = {"O": "DAYS", "W": "SPL. HOL."}
+    r = day("10-8", "10:00", "20:00", tag="SH")
+    assert tk.template_cells(r, comp, day_minutes=480) == {"O": 480 / 1440, "W": 480 / 1440}
 
 
 def test_rows_printed_with_a_stray_year():
@@ -440,6 +471,17 @@ def test_rows_printed_with_a_stray_year():
     assert dup[-1].date == date(2025, 11, 1)
     one_year = [row(date="11/1/26"), row(date="11/2/26")]
     assert tk.align_years(one_year) == one_year
+
+
+def test_late_ut_entered_on_review():
+    """DPAM, 24 Nov: an overbreak the times don't show is entered on the review screen and
+    added to that day's Late/UT (Peak 24, 1 Sep: 4 mins)."""
+    d = DayInput(date(2026, 9, 1), "", "12:00", "23:00")
+    res = tk.review_employee("Test", [d, DayInput(date(2026, 9, 2), "", "12:00", "22:00")], tk.PEAK_24,
+                             adjustments={date(2026, 9, 1): 4})
+    day1 = res.employee.days[0]
+    assert day1.columns["UT"] == 4 and day1.extra_ut == 4 and any("+4 min" in f for f in day1.flags)
+    assert res.employee.totals["UT"] == 4 and res.employee.days[1].extra_ut == 0
 
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

@@ -2931,6 +2931,12 @@ class TimekeepingTag(BaseModel):
     tag: str                  # "" (regular), WDO, SH, SHWDO, LH, LHWDO, ULH
 
 
+class TimekeepingAdjustment(BaseModel):
+    employee: int             # index into files
+    date: str                 # YYYY-MM-DD
+    minutes: int = 0          # added to the day's Late/UT (an overbreak the times don't show)
+
+
 class TimekeepingHoliday(BaseModel):
     date: str                 # YYYY-MM-DD
     kind: str = "special"     # "special" or "regular"
@@ -2944,6 +2950,7 @@ class DTRWorkbookRequest(BaseModel):
     # confirmed tags and local holidays, so the export matches what was reviewed.
     tags: list[TimekeepingTag] = []
     holidays: list[TimekeepingHoliday] = []
+    adjustments: list[TimekeepingAdjustment] = []
 
 
 @app.post("/api/pdf-info")
@@ -3033,7 +3040,8 @@ async def dtr_workbook(req: DTRWorkbookRequest):
         engine_notes: list[str] = []
         client_key = (req.client or "").strip().lower()
         if client_key in timekeeping.PROFILES and tpl.get("computed"):
-            profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays)
+            profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays,
+                                                          req.adjustments)
             flagged = hints = 0
             for idx, (block, (review, days, _)) in enumerate(zip(blocks, reviews)):
                 by_date = {r.date: r for r in review.employee.days}
@@ -3056,7 +3064,8 @@ async def dtr_workbook(req: DTRWorkbookRequest):
                             row["date"] = f"{d.month}/{d.day}/{d.year % 100:02d}"
                     res = by_date.get(d) if d else None
                     if res is not None:
-                        row["__cells__"] = timekeeping.template_cells(res, tpl["computed"], profile)
+                        row["__cells__"] = timekeeping.template_cells(
+                            res, tpl["computed"], profile, tpl.get("day_minutes"))
                         # The time columns show the times the app calculated with, so a
                         # repaired day (one punch read, time out from the schedule)
                         # doesn't sit beside hours its own times don't add up to.
@@ -3110,9 +3119,11 @@ class TimekeepingRequest(BaseModel):
     files: list[DTRWorkbookFile] = []
     tags: list[TimekeepingTag] = []          # tags the team confirmed on the review screen
     holidays: list[TimekeepingHoliday] = []  # local holidays for this branch
+    adjustments: list[TimekeepingAdjustment] = []  # Late/UT minutes entered on the review screen
 
 
-def _engine_reviews(client_key: str, files: list, tags: list, holidays: list):
+def _engine_reviews(client_key: str, files: list, tags: list, holidays: list,
+                    adjustments: list | None = None):
     """Run a batch through the client's timekeeping rules.
 
     Returns (profile, [(review, days, skipped_rows) per file], confirmed tags).
@@ -3135,6 +3146,11 @@ def _engine_reviews(client_key: str, files: list, tags: list, holidays: list):
         d = timekeeping.parse_date(t.date)
         if d:
             confirmed.setdefault(t.employee, {})[d] = timekeeping.normalize_tag(t.tag)
+    adjusted: dict[int, dict[date, int]] = {}
+    for a in adjustments or []:
+        d = timekeeping.parse_date(a.date)
+        if d and a.minutes > 0:
+            adjusted.setdefault(a.employee, {})[d] = min(int(a.minutes), 24 * 60)
 
     reviews = []
     for idx, f in enumerate(files):
@@ -3159,7 +3175,8 @@ def _engine_reviews(client_key: str, files: list, tags: list, holidays: list):
             days.append(day)
         days = timekeeping.align_years(days)
         review = timekeeping.review_employee(
-            f.name or f.file or f"Employee {idx + 1}", days, profile, confirmed.get(idx), extra)
+            f.name or f.file or f"Employee {idx + 1}", days, profile, confirmed.get(idx), extra,
+            adjusted.get(idx))
         reviews.append((review, days, skipped))
     return profile, reviews, confirmed
 
@@ -3182,7 +3199,8 @@ async def timekeeping_compute(req: TimekeepingRequest):
     if timekeeping.PROFILES.get(client_key) is None:
         label = (client_registry.get_client(client_key) or {}).get("label") or client_key or "this client"
         raise HTTPException(400, f"The app doesn't calculate {label}'s columns yet.")
-    profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays)
+    profile, reviews, confirmed = _engine_reviews(client_key, req.files, req.tags, req.holidays,
+                                                  req.adjustments)
 
     out = []
     for idx, (f, (review, days, skipped)) in enumerate(zip(req.files, reviews)):
@@ -3204,6 +3222,7 @@ async def timekeeping_compute(req: TimekeepingRequest):
                 "suggestion": ({"tag": sug.tag, "reason": sug.reason, "sure": sug.sure} if sug else None),
                 "worked": res.worked,
                 "late": res.late, "undertime": res.undertime,
+                "extra_ut": res.extra_ut,
                 "ot": res.ot, "nd": res.nd, "nd_ot": res.nd_ot,
                 "columns": {k: v for k, v in res.columns.items() if v},
                 "flags": res.flags,

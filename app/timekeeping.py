@@ -82,25 +82,29 @@ class Profile:
     shift_minutes: int = 600            # 10 hrs = 8 work + 2 break
     ot_minimum: int = 30
     ot_step: int = 30
-    nd_minimum: int = 60                # rules sheet; open item with Dom
+    nd_minimum: int = 30                # DPAM template, 24 Nov: NDF in 30-min steps, no 1-hr minimum
     nd_step: int = 30
     early_in_is_ot: bool = False
     off_schedule_flag: int = 30         # time in this far from the start -> review
     half_day_minutes: int = 300         # more than this short -> review
-    # Peak 24: (latest time in, shift start) pairs from its template's ladder.
+    # (latest time in, shift start) pairs from the template's own ladder, used when
+    # the DTR has no schedule; always for Peak 24, whose DTRs never have one.
     time_in_ladder: tuple[tuple[int, int], ...] = ()
     ladder_default_start: int | None = None
+    ladder_always: bool = False
+    # A shift taken from the ladder follows the template: the day is credited
+    # min(8 hrs, time out - shift start) / 8 and Late/UT is lateness only.
+    credit_minutes: int = 480
 
 
-CHICKEN_24 = Profile(name="24 Chicken")
-PEAK_24 = Profile(
-    name="24 Chicken - Peak 24",
-    # The Peak 24 template's own SWITCH: in by 9:30 -> 9-7, by 10:30 -> 10-8, ...
-    time_in_ladder=((9 * 60 + 30, 9 * 60), (10 * 60 + 30, 10 * 60), (11 * 60 + 30, 11 * 60),
-                    (12 * 60 + 15, 12 * 60), (12 * 60 + 45, 12 * 60 + 30),
-                    (13 * 60 + 30, 13 * 60)),
-    ladder_default_start=9 * 60,
-)
+# DPAM's template (24 Nov 2026): in by 9:30 -> 9-7, by 10:30 -> 10-8, ... by 14:15 -> 14-24.
+LADDER = ((9 * 60 + 30, 9 * 60), (10 * 60 + 30, 10 * 60), (11 * 60 + 30, 11 * 60),
+          (12 * 60 + 15, 12 * 60), (12 * 60 + 45, 12 * 60 + 30), (13 * 60 + 30, 13 * 60),
+          (14 * 60 + 15, 14 * 60))
+
+CHICKEN_24 = Profile(name="24 Chicken", time_in_ladder=LADDER, ladder_default_start=9 * 60)
+PEAK_24 = Profile(name="24 Chicken - Peak 24", time_in_ladder=LADDER, ladder_default_start=9 * 60,
+                  ladder_always=True)
 PROFILES = {"oppa_foods": CHICKEN_24, "peak24": PEAK_24}
 
 
@@ -381,6 +385,7 @@ class DayInput:
     holiday_pay: object = None    # what the sheet printed in HOLIDAY PAY
     printed_ot: bool | None = None  # does the sheet print any OT that day? None: can't tell
     notes: tuple = ()             # what reading the row assumed; shown as checks
+    extra_ut: int = 0             # minutes entered on the review screen (an overbreak, DPAM 24 Nov)
 
 
 @dataclass
@@ -398,6 +403,8 @@ class DayResult:
     flags: list[str] = field(default_factory=list)
     suggested_tag: str | None = None
     schedule: Schedule | None = None
+    credit: float = 0.0                       # share of a day credited (1 unless a short ladder day)
+    extra_ut: int = 0                         # Late/UT minutes entered on review
 
 
 def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
@@ -409,10 +416,9 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
         tag = res.tag = ""
 
     t_in, t_out = parse_time(day.time_in), parse_time(day.time_out)
-    if profile.time_in_ladder and t_in is not None:
-        sched = schedule_from_time_in(t_in, profile)
-    else:
-        sched = parse_schedule(day.schedule, profile)
+    from_ladder = bool(profile.time_in_ladder and t_in is not None
+                       and (profile.ladder_always or not str(day.schedule or "").strip()))
+    sched = schedule_from_time_in(t_in, profile) if from_ladder else parse_schedule(day.schedule, profile)
     res.schedule = sched
 
     if t_in is None and t_out is None:
@@ -453,16 +459,26 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     start, end = sched.start, sched.end
     res.worked = True
     res.worked_minutes = t_out - t_in
-    if abs(t_in - start) >= profile.off_schedule_flag:
+    if abs(t_in - start) >= profile.off_schedule_flag and (
+            not from_ladder or sched.raw.endswith("(default)")):
         res.flags.append(f"time in {t_in // 60}:{t_in % 60:02d} is "
                          f"{abs(t_in - start)} mins off the {start // 60}:{start % 60:02d} start")
 
-    # Late + undertime (Dom #2): short time counts from the later of in and start.
     res.late = max(0, t_in - start)
-    worked_span = t_out - max(t_in, start)
-    res.undertime = max(0, profile.shift_minutes - worked_span)
-    if res.late + res.undertime > profile.half_day_minutes:
-        res.flags.append(f"{res.late + res.undertime} mins late/short: more than half a day")
+    credit = 1.0
+    if from_ladder:
+        # DPAM template: DAYS = min(8 hrs, out - shift start) / 8; Late/UT is lateness only.
+        credit = round(min(profile.credit_minutes, max(0, t_out - start)) / profile.credit_minutes, 4)
+        if credit < 1:
+            res.flags.append(f"short day: credited {credit:g} of a day "
+                             f"({(t_out - start) / 60:g} hrs from the {start // 60}:{start % 60:02d} start)")
+    else:
+        # Late + undertime (Dom #2): short time counts from the later of in and start.
+        worked_span = t_out - max(t_in, start)
+        res.undertime = max(0, profile.shift_minutes - worked_span)
+        if res.late + res.undertime > profile.half_day_minutes:
+            res.flags.append(f"{res.late + res.undertime} mins late/short: more than half a day")
+    res.credit = credit
 
     # Night time inside the shift; early-in time is not counted (24 Chicken).
     inside0 = t_in if profile.early_in_is_ot else max(t_in, start)
@@ -488,13 +504,16 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
 
     day_col, ot_col, nd_col, ndot_col = TAG_MATRIX[tag]
     cols = res.columns
-    cols["DAYS"] = cols.get("DAYS", 0) + 1     # rule #1: every worked day counts in DAYS
+    cols["DAYS"] = cols.get("DAYS", 0) + credit     # rule #1: every worked day counts in DAYS
     if day_col != "DAYS":
-        cols[day_col] = cols.get(day_col, 0) + 1
+        cols[day_col] = cols.get(day_col, 0) + credit
     cols[ot_col] = res.ot / 60
     cols[nd_col] = res.nd / 60
     cols[ndot_col] = res.nd_ot / 60
-    cols["UT"] = res.late + res.undertime
+    res.extra_ut = max(0, day.extra_ut)
+    cols["UT"] = res.late + res.undertime + res.extra_ut
+    if day.extra_ut:
+        res.flags.append(f"Late/UT +{day.extra_ut} min entered on review")
     return res
 
 
@@ -540,7 +559,8 @@ def calculate_employee(name: str, days: list[DayInput], profile: Profile = CHICK
     return EmployeeResult(name=name, days=results, totals=totals, flags=flags)
 
 
-def template_cells(res: DayResult, computed: dict[str, str], profile: Profile = CHICKEN_24) -> dict[str, object]:
+def template_cells(res: DayResult, computed: dict[str, str], profile: Profile = CHICKEN_24,
+                   day_minutes: int | None = None) -> dict[str, object]:
     """One calculated day as {column letter: value} for a client template (phase 3).
 
     `computed` maps letters to COLUMNS names or "_hours" (time out - time in),
@@ -562,7 +582,8 @@ def template_cells(res: DayResult, computed: dict[str, str], profile: Profile = 
         elif key == "UT":
             cells[letter] = res.columns.get("UT", 0) / 1440
         elif key in DAY_COLUMNS:
-            cells[letter] = res.columns.get(key, 0) * profile.shift_minutes / 1440
+            # the template's day unit: its totals divide by 8 (DPAM, 24 Nov) or 10 hrs
+            cells[letter] = res.columns.get(key, 0) * (day_minutes or profile.shift_minutes) / 1440
         elif key in COLUMNS:
             cells[letter] = res.columns.get(key, 0) / 24
         else:
@@ -582,12 +603,11 @@ class Suggestion:
 def _wdo_misread(remarks) -> str | None:
     """A handwritten WDO read one letter off ("WDD", "WD0", 24 Chicken, Nov 2026).
 
-    WDO is the only three-letter mark DPAM writes, so a three-character word one
-    character away from it, and not itself a known mark, is taken as WDO.
+    Only the last letter may be off: "WDF" was a scrawled "NDF OT" on one sheet.
     """
     for w in re.findall(r"[A-Z][A-Z0-9]*", str(remarks or "").upper()):
-        if (len(w) == 3 and w != "WDO" and w not in _KNOWN_MARK_WORDS
-                and sum(a != b for a, b in zip(w, "WDO")) == 1):
+        # only the O misread (D, 0, Q, C, G): "WDF" is a scrawled NDF as often as a WDO
+        if len(w) == 3 and w[:2] == "WD" and w[2] in "D0QCG":
             return w
     return None
 
@@ -688,7 +708,8 @@ class ReviewResult:
 
 def review_employee(name: str, days: list[DayInput], profile: Profile = CHICKEN_24,
                     confirmed: dict[date, str] | None = None,
-                    extra_holidays: dict | None = None) -> ReviewResult:
+                    extra_holidays: dict | None = None,
+                    adjustments: dict[date, int] | None = None) -> ReviewResult:
     """Suggest tags, apply them under the team's confirmed ones, and calculate.
 
     Precedence per day: a tag the team confirmed on the review screen, then a tag
@@ -697,6 +718,7 @@ def review_employee(name: str, days: list[DayInput], profile: Profile = CHICKEN_
     """
     import holidays as hol
     confirmed = confirmed or {}
+    adjustments = adjustments or {}
     suggestions = suggest_tags(days, profile, extra_holidays)
     tagged = []
     for d in days:
@@ -708,7 +730,8 @@ def review_employee(name: str, days: list[DayInput], profile: Profile = CHICKEN_
             tag = suggestions[d.date].tag
         else:
             tag = ""
-        tagged.append(dataclasses.replace(d, tag=tag))   # keeps every field read off the sheet
+        # replace() keeps every field read off the sheet
+        tagged.append(dataclasses.replace(d, tag=tag, extra_ut=adjustments.get(d.date, d.extra_ut)))
     emp = calculate_employee(name, tagged, profile, hol.legal_holidays(extra_holidays))
     return ReviewResult(emp, suggestions, {d.date: normalize_tag(d.tag) for d in tagged})
 
