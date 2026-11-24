@@ -322,6 +322,9 @@ def test_ot_the_sheet_does_not_show_is_flagged():
     real = tk.calculate_day(row(time_out="22:00", ot_hrs="600", holiday_pay="1",
                                 holiday_ot="93.75", total="693.75", net_total="693.75"))
     assert not any("sheet shows no OT" in f for f in real.flags), real.flags
+    # holiday + OT day read with its pay in TOTAL's place: totals disagree, so no flag
+    shifted = tk.calculate_day(row(time_out="22:00", ot_hrs="", total="273.75", net_total="873.75"))
+    assert not any("sheet shows no OT" in f for f in shifted.flags), shifted.flags
     # an OT mark written on the row is enough too
     marked = tk.calculate_day(row(time_out="22:00", remarks="1 OT"))
     assert not any("sheet shows no OT" in f for f in marked.flags), marked.flags

@@ -304,6 +304,10 @@ def _printed_ot(values: dict) -> bool | None:
     totals = set(_numbers(values.get("total")) + _numbers(values.get("net_total")))
     if not totals:
         return None
+    if len(totals) > 1:
+        # TOTAL and NET TOTAL disagree (273.75 | 873.75): something beyond the day's pay
+        # is on the row, and which cell it sits in can't be trusted. Don't flag.
+        return True
     extra = [n for k in ("ot_hrs", "holiday_pay", "holiday_ot") for n in _numbers(values.get(k))
              if n > 0 and n not in totals]
     return bool(extra)
