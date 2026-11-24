@@ -3038,9 +3038,22 @@ async def dtr_workbook(req: DTRWorkbookRequest):
             for idx, (block, (review, days, _)) in enumerate(zip(blocks, reviews)):
                 by_date = {r.date: r for r in review.employee.days}
                 read = {d.date: d for d in days}
-                year = next((d.date.year for d in days), None)
+                counts: dict[int, int] = {}
+                for x in days:
+                    counts[x.date.year] = counts.get(x.date.year, 0) + 1
+                year = max(counts, key=lambda y: (counts[y], y)) if counts else None
                 for row in block["rows"]:
                     d = timekeeping.parse_date(row.get("date"), year)
+                    if d is not None and d not in by_date and year is not None:
+                        # a row printed with a stray year (see timekeeping.align_years)
+                        try:
+                            aligned = d.replace(year=year)
+                        except ValueError:
+                            aligned = None
+                        if aligned in by_date and any(
+                                "date printed with the year" in f for f in by_date[aligned].flags):
+                            d = aligned
+                            row["date"] = f"{d.month}/{d.day}/{d.year % 100:02d}"
                     res = by_date.get(d) if d else None
                     if res is not None:
                         row["__cells__"] = timekeeping.template_cells(res, tpl["computed"], profile)
@@ -3144,6 +3157,7 @@ def _engine_reviews(client_key: str, files: list, tags: list, holidays: list):
                 skipped += bool("".join(r).strip())
                 continue
             days.append(day)
+        days = timekeeping.align_years(days)
         review = timekeeping.review_employee(
             f.name or f.file or f"Employee {idx + 1}", days, profile, confirmed.get(idx), extra)
         reviews.append((review, days, skipped))

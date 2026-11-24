@@ -418,6 +418,29 @@ def test_blank_schedule_is_not_called_unreadable():
     r = tk.calculate_day(row(schedule="", time_in="11:00", time_out="21:00"))
     assert "no schedule written; assumed 10 hrs from time in" in r.flags, r.flags
 
+
+def test_rows_printed_with_a_stray_year():
+    """24 Chicken, Nov 2026: a sheet printed "11/1/25" ... "11/9/25" among its 2026 rows.
+    Read as written those days left the cut-off and lost the 1 Nov holiday."""
+    dates = ["10/26/26", "10/27/26", "10/28/26", "10/29/26", "10/30/26", "10/31/26", "11/1/25",
+             "11/2/25", "11/3/25", "11/4/25", "11/5/26", "11/6/25", "11/7/25", "11/8/26", "11/9/25",
+             "11/10/26"]
+    days = [row(date=x, schedule="10-8", time_in="10:00", time_out="20:00") for x in dates]
+    fixed = tk.align_years(days)
+    assert all(d.date.year == 2026 for d in fixed), [d.date for d in fixed]
+    assert sum(any("printed with the year 2025" in n for n in d.notes) for d in fixed) == 7
+    res = tk.review_employee("Test", fixed)
+    nov1 = next(r for r in res.employee.days if r.date == date(2026, 11, 1))
+    assert nov1.tag == "SH" and any("year 2025" in f for f in nov1.flags), (nov1.tag, nov1.flags)
+    # a year that can't belong (a month away from the sheet's days) is left alone
+    far = tk.align_years([row(date="10/26/26"), row(date="10/27/26"), row(date="3/1/25")])
+    assert far[-1].date == date(2025, 3, 1)
+    # nor is a row whose date in the sheet's year is already taken
+    dup = tk.align_years([row(date="11/1/26"), row(date="11/2/26"), row(date="11/1/25")])
+    assert dup[-1].date == date(2025, 11, 1)
+    one_year = [row(date="11/1/26"), row(date="11/2/26")]
+    assert tk.align_years(one_year) == one_year
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

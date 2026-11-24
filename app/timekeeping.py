@@ -289,6 +289,41 @@ def day_from_row(values: dict, default_year: int | None = None) -> "DayInput | N
                     printed_ot=_printed_ot(values), notes=tuple(notes))
 
 
+def align_years(days: list[DayInput]) -> list[DayInput]:
+    """Put rows printed with a stray year back into the sheet's year, flagged.
+
+    A printed DTR can carry the wrong year on some rows ("11/1/25" ... "11/9/25" on a
+    26 Oct - 10 Nov 2026 sheet, 24 Chicken). Read as written, those days fall
+    outside the cut-off, miss their holidays and match no row in the export. The
+    sheet's year is the one most rows carry (the later one on a tie); a row moves
+    only when its date in that year lands within a month of the sheet's other days
+    and on a date no other row already has.
+    """
+    years: dict[int, int] = {}
+    for d in days:
+        years[d.date.year] = years.get(d.date.year, 0) + 1
+    if len(years) < 2:
+        return days
+    main = max(years, key=lambda y: (years[y], y))
+    own = sorted(d.date for d in days if d.date.year == main)
+    lo, hi = own[0] - timedelta(days=31), own[-1] + timedelta(days=31)
+    taken = set(own)
+    out = []
+    for d in days:
+        if d.date.year != main:
+            try:
+                moved = d.date.replace(year=main)
+            except ValueError:              # 29 Feb
+                moved = None
+            if moved is not None and lo <= moved <= hi and moved not in taken:
+                taken.add(moved)
+                d = dataclasses.replace(d, date=moved, notes=d.notes + (
+                    f"date printed with the year {d.date.year}; taken as {main} like the "
+                    "rest of the sheet",))
+        out.append(d)
+    return out
+
+
 def _numbers(text) -> list[float]:
     return [float(n) for n in _NUMBER.findall(str(text or "").replace(",", ""))]
 
