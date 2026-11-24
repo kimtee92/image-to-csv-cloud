@@ -1368,6 +1368,27 @@ def _is_inout_table(headers: list[str]) -> bool:
     return any(k in mapping for k in ("break_hrs", "net_total", "normal", "deductions"))
 
 
+def _inout_unshift(rows: list[list[str]]) -> list[dict[str, Any]]:
+    """Pull back a row read one column to the right.
+
+    A handwritten mark at the start of a row (an "SPL" bracket beside the
+    schedule) can make the model emit an extra blank cell: TIME IN comes back
+    empty, the time in lands in TIME OUT and the time out in BREAK (Oppa Foods,
+    2 Nov). BREAK holds hours, never a clock time, so that pattern is proof.
+    """
+    t_in, t_out = INOUT_SLOTS.index("time_in"), INOUT_SLOTS.index("time_out")
+    brk, rem = INOUT_SLOTS.index("break_hrs"), INOUT_SLOTS.index("remarks")
+    is_time = lambda v: bool(re.fullmatch(r"\s*\d{1,2}:\d{2}\s*", str(v or "")))  # noqa: E731
+    flags = []
+    for i, row in enumerate(rows):
+        if not str(row[t_in]).strip() and is_time(row[t_out]) and is_time(row[brk]):
+            row[t_in:rem] = row[t_in + 1:rem] + [""]
+            flags.append({"row": i, "col": t_in,
+                          "reason": "this row was read one column to the right and has been "
+                                    "moved back; check the time in and time out"})
+    return flags
+
+
 def _inout_canonicalise(table_data: dict) -> bool:
     """Rewrite a recognised in/out sheet into the fixed in/out schema."""
     headers = table_data.get("headers") or []
@@ -1383,10 +1404,10 @@ def _inout_canonicalise(table_data: dict) -> bool:
         ]
         for row in rows
     ]
+    inout_flags: list[dict[str, Any]] = _inout_unshift(canonical)
     # time_in/time_out are adjacent and in order; a night shift's out belongs on
     # the next day. Everything after them is hours and money, so stop there.
     lo = INOUT_SLOTS.index("time_in")
-    inout_flags: list[dict[str, Any]] = []
     for row_idx, row in enumerate(canonical):
         rolled, crossed = _roll_overnight(row[lo:lo + 2])
         row[lo:lo + 2] = rolled
@@ -2680,7 +2701,9 @@ async def ocr_image(
         )
         return any(k in label_norm for k in footer_keywords)
 
-    ocr_lines_all = full_ocr_text.splitlines()
+    # The model sometimes writes the line breaks in full_text as a literal "\n",
+    # which ran every header field into the employee name (Oppa Foods, 24 Nov).
+    ocr_lines_all = re.sub(r"(?:\\r)?\\n", "\n", str(full_ocr_text)).splitlines()
 
     # Find the table region in the OCR text.
     # Exclude lines that look like metadata key:value fields — common tokens like

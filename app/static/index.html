@@ -2523,8 +2523,12 @@
       }
 
       // Table data
-      const rows = [r.headers, ...r.rows];
-      rows.forEach(row => csvLines.push(escapeCSVRow(row)));
+      // A schedule like "12-10" or "9-7" opens in Excel as a date (10-Dec, 7-Sep)
+      // and "-12-10" as the sum -22 (24 Chicken, Nov 2026). ="12-10" keeps it as text.
+      const keepText = cell => /^\s*-?\d{1,2}\s*-\s*\d{1,2}\s*$/.test(String(cell))
+        ? `="${String(cell).trim()}"` : cell;
+      csvLines.push(escapeCSVRow(r.headers));
+      r.rows.forEach(row => csvLines.push(escapeCSVRow(row.map(keepText))));
 
       // Footer fields below table
       if (r.footerFields.length) {
@@ -2578,7 +2582,8 @@
     function employeeNameFor(r) {
       const fields = (r.headerFields || []).concat(r.footerFields || []);
       const labelOf = f => String(f.label || '').replace(/:\s*$/, '').trim();
-      const valueOf = f => String(f.value || '').trim();
+      // Only the first line: a literal backslash-n once ran the whole header into the name.
+      const valueOf = f => String(f.value || '').split(/\\n|\n/)[0].trim();
       for (const pattern of EMPLOYEE_NAME_LABELS) {
         const hit = fields.find(f => pattern.test(labelOf(f)) && valueOf(f));
         if (hit) return valueOf(hit);

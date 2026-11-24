@@ -297,6 +297,47 @@ def test_misread_schedule_start_taken_from_end():
     assert r.columns["UT"] == 0 and any("from its end" in f for f in r.flags)
 
 
+
+def test_tick_before_schedule():
+    """24 Chicken, 24 Nov: a checker's tick before the schedule read as "-12-10"."""
+    for text, start in (("-12-10", 720), ("- 9-7", 540), ("~10-8", 600), ("–12-10", 720)):
+        s = tk.parse_schedule(text)
+        assert (s.kind, s.start) == ("shift", start), (text, s)
+
+
+def row(**kw):
+    base = {"date": "10/29/26", "schedule": "11-9", "time_in": "11:00", "time_out": "21:00",
+            "break_hrs": "2", "normal": "8", "ot_hrs": "600", "holiday_pay": "", "holiday_ot": "",
+            "total": "600", "net_total": "600", "remarks": ""}
+    base.update(kw)
+    return tk.day_from_row(base)
+
+
+def test_ot_the_sheet_does_not_show_is_flagged():
+    """24 Chicken, 24 Nov: time out read 22:00 for a printed 21:00. The sheet's own
+    columns show no OT that day (only the day's pay, 600), so say so."""
+    misread = tk.calculate_day(row(time_out="22:00"))
+    assert misread.ot == 60 and any("sheet shows no OT" in f for f in misread.flags), misread.flags
+    # a real OT day: the sheet prints the hour and its pay (cells shifted as read)
+    real = tk.calculate_day(row(time_out="22:00", ot_hrs="600", holiday_pay="1",
+                                holiday_ot="93.75", total="693.75", net_total="693.75"))
+    assert not any("sheet shows no OT" in f for f in real.flags), real.flags
+    # an OT mark written on the row is enough too
+    marked = tk.calculate_day(row(time_out="22:00", remarks="1 OT"))
+    assert not any("sheet shows no OT" in f for f in marked.flags), marked.flags
+    # no printed totals at all (another layout): no opinion
+    bare = tk.calculate_day(row(time_out="22:00", total="", net_total="", ot_hrs=""))
+    assert not any("sheet shows no OT" in f for f in bare.flags), bare.flags
+
+
+def test_hours_in_holiday_pay_is_not_a_holiday_hint():
+    """24 Chicken, 24 Nov: "1" (OT hours) slid into HOLIDAY PAY and hinted SH on 3 days."""
+    d = row(date="10/28/26", time_out="22:00", holiday_pay="1", holiday_ot="93.75",
+            total="693.75", net_total="693.75")
+    assert date(2026, 10, 28) not in tk.suggest_tags([d])
+    pay = row(date="10/28/26", holiday_pay="180", total="780", net_total="780")
+    assert tk.suggest_tags([pay])[date(2026, 10, 28)].tag == "SH"
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -149,6 +149,8 @@ class Schedule:
 def parse_schedule(text, profile: Profile = CHICKEN_24) -> Schedule:
     """'12-10' -> 12:00-22:00; '1-11' -> 13:00-23:00; '9:00-19:00' as written; RD etc. -> no shift."""
     raw = "" if text is None else str(text)
+    # A tick or dash written before the schedule ("-12-10", "~9-7") is a checker's mark.
+    raw = re.sub(r"^\s*[-~'`‐-―]+\s*(?=\d)", "", raw)
     # "11.9" / "11:9" is how a smudged "11-9" reads; "12:30" stays a time (30 is no hour).
     dotted = re.fullmatch(r"\s*(\d{1,2})\s*[.:]\s*(\d{1,2})\s*", raw)
     if dotted and int(dotted.group(2)) <= 12:
@@ -268,7 +270,28 @@ def day_from_row(values: dict, default_year: int | None = None) -> "DayInput | N
     pay = _NUMBER.search(pay_text.replace(",", ""))
     return DayInput(d, str(values.get("schedule") or ""), t_in, t_out,
                     remarks=" | ".join(dict.fromkeys(marks)),
-                    holiday_pay=pay.group(0) if pay else None)
+                    holiday_pay=pay.group(0) if pay else None,
+                    printed_ot=_printed_ot(values))
+
+
+def _numbers(text) -> list[float]:
+    return [float(n) for n in _NUMBER.findall(str(text or "").replace(",", ""))]
+
+
+def _printed_ot(values: dict) -> bool | None:
+    """Whether the sheet's own columns show OT that day; None when it prints no totals.
+
+    The OT and holiday cells don't line up reliably (NORMAL's pay sub-column and
+    blank cells shift them), so this looks at all three together and ignores the
+    day's own pay, which is the number that also sits in TOTAL. Anything else
+    there (OT hours, OT pay, holiday pay) counts as "the sheet shows something".
+    """
+    totals = set(_numbers(values.get("total")) + _numbers(values.get("net_total")))
+    if not totals:
+        return None
+    extra = [n for k in ("ot_hrs", "holiday_pay", "holiday_ot") for n in _numbers(values.get(k))
+             if n > 0 and n not in totals]
+    return bool(extra)
 
 
 # ── per-day calculation ─────────────────────────────────────────────────────
@@ -302,6 +325,7 @@ class DayInput:
     tag: str = ""                 # a Remarks tag already decided (template, review screen)
     remarks: str = ""             # handwritten marks read off the scan: WDO, SPL, OT ...
     holiday_pay: object = None    # what the sheet printed in HOLIDAY PAY
+    printed_ot: bool | None = None  # does the sheet print any OT that day? None: can't tell
 
 
 @dataclass
@@ -398,6 +422,11 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     res.ot = round_down(ot_raw, profile.ot_minimum, profile.ot_step)
     res.nd = round_down(nd_raw, profile.nd_minimum, profile.nd_step)
     res.nd_ot = round_down(nd_ot_raw, profile.nd_minimum, profile.nd_step)
+    if ((res.ot or res.nd_ot) and day.printed_ot is False
+            and not re.search(r"\bOT\b", str(day.remarks or "").upper())):
+        hrs = (res.ot + res.nd_ot) / 60
+        res.flags.append(f"the times give {hrs:g} hr OT but the sheet shows no OT "
+                         "that day: check the time out")
 
     day_col, ot_col, nd_col, ndot_col = TAG_MATRIX[tag]
     cols = res.columns
@@ -556,7 +585,8 @@ def suggest_tags(days: list[DayInput], profile: Profile = CHICKEN_24,
             tag = base + ("WDO" if rest_day else "")
             why = f"{name} ({'regular holiday' if base == 'LH' else 'special non-working day'})"
             out[d.date] = Suggestion(tag, why + (f", and {rest_why}" if rest_day else ""), True)
-        elif marks & {"SH", "LH"} or _amount(d.holiday_pay) > 0:
+        elif marks & {"SH", "LH"} or _amount(d.holiday_pay) >= 50:
+            # (below 50 is an hours figure that slid into the column, e.g. "1" hr OT)
             base = "LH" if "LH" in marks else "SH"
             evidence = "holiday mark on the scan" if marks & {"SH", "LH"} else "holiday pay printed"
             out[d.date] = Suggestion(base + ("WDO" if rest_day else ""),
