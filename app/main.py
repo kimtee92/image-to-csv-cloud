@@ -1378,10 +1378,16 @@ def _inout_unshift(rows: list[list[str]]) -> list[dict[str, Any]]:
     """
     t_in, t_out = INOUT_SLOTS.index("time_in"), INOUT_SLOTS.index("time_out")
     brk, rem = INOUT_SLOTS.index("break_hrs"), INOUT_SLOTS.index("remarks")
-    is_time = lambda v: bool(re.fullmatch(r"\s*\d{1,2}:\d{2}\s*", str(v or "")))  # noqa: E731
+    def clock(v) -> int | None:
+        m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", str(v or ""))
+        return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
     flags = []
     for i, row in enumerate(rows):
-        if not str(row[t_in]).strip() and is_time(row[t_out]) and is_time(row[brk]):
+        start, end = clock(row[t_out]), clock(row[brk])
+        # Only when the pair reads as a day's in and out ("9:00", "19:00"), so a
+        # form that prints BREAK as "1:00" is never mistaken for a shifted row.
+        if not str(row[t_in]).strip() and start is not None and end is not None and start < end:
             row[t_in:rem] = row[t_in + 1:rem] + [""]
             flags.append({"row": i, "col": t_in,
                           "reason": "this row was read one column to the right and has been "
@@ -3031,12 +3037,22 @@ async def dtr_workbook(req: DTRWorkbookRequest):
             flagged = hints = 0
             for idx, (block, (review, days, _)) in enumerate(zip(blocks, reviews)):
                 by_date = {r.date: r for r in review.employee.days}
+                read = {d.date: d for d in days}
                 year = next((d.date.year for d in days), None)
                 for row in block["rows"]:
                     d = timekeeping.parse_date(row.get("date"), year)
                     res = by_date.get(d) if d else None
                     if res is not None:
                         row["__cells__"] = timekeeping.template_cells(res, tpl["computed"], profile)
+                        # The time columns show the times the app calculated with, so a
+                        # repaired day (one punch read, time out from the schedule)
+                        # doesn't sit beside hours its own times don't add up to.
+                        day = read.get(d)
+                        for slots, value in ((("time_in", "first_in"), day and day.time_in),
+                                             (("time_out", "final_out"), day and day.time_out)):
+                            for s in slots:
+                                if day is not None and s in row:
+                                    row[s] = "" if value is None else str(value)
                 flagged += sum(1 for r in review.employee.days if r.flags)
                 hints += sum(1 for dt, s in review.suggestions.items()
                              if not s.sure and dt not in (confirmed.get(idx) or {})

@@ -444,7 +444,7 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     res.nd = round_down(nd_raw, profile.nd_minimum, profile.nd_step)
     res.nd_ot = round_down(nd_ot_raw, profile.nd_minimum, profile.nd_step)
     if ((res.ot or res.nd_ot) and day.printed_ot is False
-            and not re.search(r"\bOT\b", str(day.remarks or "").upper())):
+            and not re.search(r"(?<![A-Z])OT(?![A-Z])", str(day.remarks or "").upper())):
         hrs = (res.ot + res.nd_ot) / 60
         res.flags.append(f"the times give {hrs:g} hr OT but the sheet shows no OT "
                          "that day: check the time out")

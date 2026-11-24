@@ -2525,7 +2525,10 @@
       // Table data
       // A schedule like "12-10" or "9-7" opens in Excel as a date (10-Dec, 7-Sep)
       // and "-12-10" as the sum -22 (24 Chicken, Nov 2026). ="12-10" keeps it as text.
-      const keepText = cell => /^\s*-?\d{1,2}\s*-\s*\d{1,2}\s*$/.test(String(cell))
+      // Schedule columns only, so no other client's CSV changes.
+      const schedCols = new Set(r.headers
+        .map((h, i) => (/sched|shift/i.test(String(h)) ? i : -1)).filter(i => i >= 0));
+      const keepText = (cell, i) => schedCols.has(i) && /^\s*-?\d{1,2}\s*-\s*\d{1,2}\s*$/.test(String(cell))
         ? `="${String(cell).trim()}"` : cell;
       csvLines.push(escapeCSVRow(r.headers));
       r.rows.forEach(row => csvLines.push(escapeCSVRow(row.map(keepText))));

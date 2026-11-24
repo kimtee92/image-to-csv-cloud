@@ -362,6 +362,44 @@ def test_review_keeps_what_was_read_off_the_sheet():
     flags = [f for x in res.employee.days for f in x.flags]
     assert any("sheet shows no OT" in f for f in flags), flags
 
+
+def _from_main(*names):
+    """Functions/constants from app/main.py without importing it (CI has no FastAPI)."""
+    import ast
+    import re
+    from typing import Any
+    src = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
+    ns = {"re": re, "Any": Any}
+    for node in ast.parse(src).body:
+        target = (node.name if isinstance(node, ast.FunctionDef) else
+                  getattr(node.targets[0], "id", None) if isinstance(node, ast.Assign) else None)
+        if target in names:
+            exec(ast.get_source_segment(src, node), ns)
+    return ns
+
+
+def test_row_read_one_column_right_is_moved_back():
+    """24 Chicken, 2 Nov: an SPL bracket made the model add a blank cell, so the time
+    in came back under TIME OUT and the time out under BREAK."""
+    ns = _from_main("INOUT_SLOTS", "_inout_unshift")
+    shifted = ["11/2/26", "monday", "-9-7", "", "9:00", "19:00", "2", "8", "", "180", "780", "",
+               "780", "SPL"]
+    flags = ns["_inout_unshift"]([shifted])
+    assert shifted[3:8] == ["9:00", "19:00", "2", "8", ""] and shifted[-1] == "SPL", shifted
+    assert len(flags) == 1 and flags[0]["row"] == 0
+    for fine in (["11/3/26", "tuesday", "12-10", "12:00", "22:00", "2", "8", "", "", "", "600", "",
+                  "600", ""],
+                 # BREAK printed as a time on another form, with a missing time in: not a shift
+                 ["11/3/26", "tuesday", "12-10", "", "22:00", "1:00", "8", "", "", "", "600", "",
+                  "600", ""]):
+        before = list(fine)
+        assert ns["_inout_unshift"]([fine]) == [] and fine == before, fine
+
+
+def test_ot_mark_written_without_a_space():
+    d = row(time_out="22:00", remarks="1OT")
+    assert not any("sheet shows no OT" in f for f in tk.calculate_day(d).flags)
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
