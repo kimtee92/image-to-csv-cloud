@@ -460,7 +460,7 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     res.worked = True
     res.worked_minutes = t_out - t_in
     if abs(t_in - start) >= profile.off_schedule_flag and (
-            not from_ladder or sched.raw.endswith("(default)")):
+            not from_ladder or sched.text.endswith("(default)")):
         res.flags.append(f"time in {t_in // 60}:{t_in % 60:02d} is "
                          f"{abs(t_in - start)} mins off the {start // 60}:{start % 60:02d} start")
 
