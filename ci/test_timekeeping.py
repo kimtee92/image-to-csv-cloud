@@ -429,7 +429,10 @@ def test_half_hour_late_on_a_ladder_shift():
     """Aug 2026: 10:30 in is the 10-8 shift, 30 mins late; this once crashed the whole batch
     (the "off the start" check looked up a field the schedule doesn't have)."""
     r = tk.calculate_day(DayInput(D, "", "10:30", "20:00"), tk.PEAK_24)
-    assert (r.schedule.start, r.late, r.columns["UT"]) == (600, 30, 30) and not r.flags, r.flags
+    assert (r.schedule.start, r.late, r.columns["UT"]) == (600, 30, 30)
+    assert r.flags == ["30 mins late (10:30): check the time in on the scan"], r.flags
+    both = tk.calculate_day(DayInput(D, "", "10:10", "21:30"), tk.PEAK_24)   # DPAM key: 10 late + 1.5 OT
+    assert (both.late, both.ot) == (10, 90) and not both.flags, both.flags
     far = tk.calculate_day(DayInput(D, "", "15:00", "23:00"), tk.PEAK_24)   # past the ladder
     assert far.schedule.start == 540 and any("mins off the 9:00 start" in f for f in far.flags)
 
@@ -438,6 +441,14 @@ def test_short_day_from_the_ladder_is_part_of_a_day():
     """Peak 24, 27 Aug: 11:00-13:00 is 2 of 8 hrs = 0.25 day (DPAM: "1.25 day" for the cut-off)."""
     r = tk.calculate_day(DayInput(D, "", "11:00", "13:00"), tk.PEAK_24)
     assert r.columns["DAYS"] == 0.25 and r.columns["UT"] == 0 and any("short day" in f for f in r.flags)
+
+
+def test_eleven_thirty_shift():
+    """Oppa Foods, 9 Sep: 11:30-22:30 is the 11:30-21:30 shift in DPAM's results: on time,
+    0.5 OT and 0.5 NDF OT."""
+    r = tk.calculate_day(DayInput(D, "", "11:30", "22:30"), tk.PEAK_24)
+    assert (r.schedule.start, r.late, r.ot, r.nd_ot) == (690, 0, 30, 30), r
+    assert tk.calculate_day(DayInput(D, "", "11:10", "21:00"), tk.PEAK_24).schedule.start == 660
 
 
 def test_two_pm_shift_runs_to_midnight():

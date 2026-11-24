@@ -98,9 +98,11 @@ class Profile:
 
 
 # DPAM's template (24 Nov 2026): in by 9:30 -> 9-7, by 10:30 -> 10-8, ... by 14:15 -> 14-24.
-LADDER = ((9 * 60 + 30, 9 * 60), (10 * 60 + 30, 10 * 60), (11 * 60 + 30, 11 * 60),
-          (12 * 60 + 15, 12 * 60), (12 * 60 + 45, 12 * 60 + 30), (13 * 60 + 30, 13 * 60),
-          (14 * 60 + 15, 14 * 60))
+# Its Shift Schedule sheet also lists 11:30-21:30, and its Aug 26 - Sep 10 results used it
+# (11:30 in: not late, OT after 21:30), so 11:30 gets a rung like 12:30's (to confirm with DPAM).
+LADDER = ((9 * 60 + 30, 9 * 60), (10 * 60 + 30, 10 * 60), (11 * 60 + 15, 11 * 60),
+          (11 * 60 + 45, 11 * 60 + 30), (12 * 60 + 15, 12 * 60), (12 * 60 + 45, 12 * 60 + 30),
+          (13 * 60 + 30, 13 * 60), (14 * 60 + 15, 14 * 60))
 
 CHICKEN_24 = Profile(name="24 Chicken", time_in_ladder=LADDER, ladder_default_start=9 * 60)
 PEAK_24 = Profile(name="24 Chicken - Peak 24", time_in_ladder=LADDER, ladder_default_start=9 * 60,
@@ -466,6 +468,9 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
 
     res.late = max(0, t_in - start)
     credit = 1.0
+    if from_ladder and res.late == profile.off_schedule_flag:
+        # a tick through "10:00" reads as "10:30" (DPAM, Aug 2026): exactly the ladder's edge
+        res.flags.append(f"{res.late} mins late ({t_in // 60}:{t_in % 60:02d}): check the time in on the scan")
     if from_ladder:
         # DPAM template: DAYS = min(8 hrs, out - shift start) / 8; Late/UT is lateness only.
         credit = round(min(profile.credit_minutes, max(0, t_out - start)) / profile.credit_minutes, 4)
@@ -490,7 +495,8 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     if t_out > end:
         nd_ot_raw = night_minutes(end, t_out)
         ot_raw = (t_out - end) - nd_ot_raw
-    if res.late and (ot_raw or nd_ot_raw):
+    if res.late and (ot_raw or nd_ot_raw) and not from_ladder:
+        # (the template counts both on a shift taken from the time in, as DPAM's key does)
         res.flags.append("late and stayed past the shift end: OT or make-up? (open item)")
 
     res.ot = round_down(ot_raw, profile.ot_minimum, profile.ot_step)
