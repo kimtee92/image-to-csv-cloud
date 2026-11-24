@@ -57,7 +57,11 @@ def employee_name(ocr: dict, fallback: str) -> str:
     for line in lines:
         m = re.match(r"\s*(?:employee(?:'?s)?(?:\s+name)?|name)\s*:\s*(.+)", line, re.I)
         if m and m.group(1).strip():
-            return m.group(1).strip()
+            # same cut as the page (NEXT_HEADER_LABEL): stop at a following header label
+            return re.split(r"\s+(?:position|designation|branch|store|outlet|period|cut-?off|"
+                            r"department|dept|company|agency|area|assignment|date|"
+                            r"employee\s*(?:no\.?|#|id)|id\s*no\.?|salary|management|total|"
+                            r"subject|day-?off)\b\.?\s*:", m.group(1), flags=re.I)[0].strip()
     return fallback
 
 

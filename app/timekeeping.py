@@ -404,7 +404,9 @@ def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
         sched = Schedule(t_in, t_in + profile.shift_minutes, "shift", "assumed from time in")
         res.flags.append("no shift on the schedule; assumed 10 hrs from time in")
     elif sched.kind != "shift":
-        res.flags.append(f"unreadable schedule {day.schedule!r}; assumed 10 hrs from time in")
+        res.flags.append(f"unreadable schedule {day.schedule!r}; assumed 10 hrs from time in"
+                         if str(day.schedule or "").strip() else
+                         "no schedule written; assumed 10 hrs from time in")
         sched = Schedule(t_in, t_in + profile.shift_minutes, "shift", "assumed from time in")
     if sched.written_end_mismatch:
         res.flags.append(f"schedule {day.schedule!r}: written end doesn't match a 10-hr shift")
@@ -542,10 +544,24 @@ class Suggestion:
     sure: bool           # True: pre-filled on the review screen; False: shown as a hint only
 
 
+def _wdo_misread(remarks) -> str | None:
+    """A handwritten WDO read one letter off ("WDD", "WD0", 24 Chicken, Nov 2026).
+
+    WDO is the only three-letter mark DPAM writes, so a three-character word one
+    character away from it, and not itself a known mark, is taken as WDO.
+    """
+    for w in re.findall(r"[A-Z][A-Z0-9]*", str(remarks or "").upper()):
+        if (len(w) == 3 and w != "WDO" and w not in _KNOWN_MARK_WORDS
+                and sum(a != b for a, b in zip(w, "WDO")) == 1):
+            return w
+    return None
+
+
 def _marks(remarks) -> set[str]:
     words = set(re.findall(r"[A-Z]+", str(remarks or "").upper()))
     out = set()
-    if words & {"WDO", "SHWDO", "LHWDO"} or "DAYOFF" in str(remarks or "").upper().replace(" ", ""):
+    if (words & {"WDO", "SHWDO", "LHWDO"} or "DAYOFF" in str(remarks or "").upper().replace(" ", "")
+            or _wdo_misread(remarks)):
         out.add("WDO")
     if words & {"SPL", "SH", "SPECIAL", "SHWDO"}:
         out.add("SH")
@@ -597,8 +613,10 @@ def suggest_tags(days: list[DayInput], profile: Profile = CHICKEN_24,
         sched = parse_schedule(d.schedule, profile)
         marks = _marks(d.remarks)
         rest_day = sched.kind == "rest" or "WDO" in marks
+        misread = _wdo_misread(d.remarks)
         rest_why = ("schedule says RD" if sched.kind == "rest"
-                    else "WDO written on the scan") if rest_day else ""
+                    else f"WDO written on the scan (read as {misread!r})" if misread
+                    and "WDO" not in d.remarks.upper() else "WDO written on the scan") if rest_day else ""
         cal = hol.holiday(d.date, extra_holidays)
         if cal:
             kind, name = cal

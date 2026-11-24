@@ -400,6 +400,24 @@ def test_ot_mark_written_without_a_space():
     d = row(time_out="22:00", remarks="1OT")
     assert not any("sheet shows no OT" in f for f in tk.calculate_day(d).flags)
 
+
+def test_wdo_read_one_letter_off():
+    """24 Chicken, 24 Nov: a handwritten WDO came back as "WDD" on a holiday and on a
+    Sunday, so the holiday lost its WDO and the Sunday its tag."""
+    hol = row(date="11/1/26", schedule="10-8", time_in="10:00", time_out="20:00", remarks="WDD | 180",
+              holiday_pay="180", total="780", net_total="780")
+    sun = row(date="11/8/26", schedule="10-8", time_in="10:00", time_out="20:00", remarks="WDD")
+    s = tk.suggest_tags([hol, sun])
+    assert (s[date(2026, 11, 1)].tag, s[date(2026, 11, 8)].tag) == ("SHWDO", "WDO"), s
+    assert "read as 'WDD'" in s[date(2026, 11, 8)].reason and s[date(2026, 11, 8)].sure
+    for other in ("NDF", "OT", "SPL", "NDD-1", "WD", "WDOT"):
+        assert "WDO" not in tk._marks(other), other
+
+
+def test_blank_schedule_is_not_called_unreadable():
+    r = tk.calculate_day(row(schedule="", time_in="11:00", time_out="21:00"))
+    assert "no schedule written; assumed 10 hrs from time in" in r.flags, r.flags
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

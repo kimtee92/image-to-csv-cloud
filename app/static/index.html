@@ -2582,11 +2582,18 @@
       ['middle', /^(middle\s*name|middle\s*initial|m\.?\s*i\.?)$/i],
     ];
 
+    // Header labels that can follow the name on the same line. Only these: a
+    // general "Word:" pattern also cut "Ana B. Cruz Position:" to "Ana".
+    const NEXT_HEADER_LABEL = /\s+(?:position|designation|branch|store|outlet|period|cut-?off|department|dept|company|agency|area|assignment|date|employee\s*(?:no\.?|#|id)|id\s*no\.?|salary|management|total|subject|day-?off)\b\.?\s*:/i;
+
     function employeeNameFor(r) {
       const fields = (r.headerFields || []).concat(r.footerFields || []);
       const labelOf = f => String(f.label || '').replace(/:\s*$/, '').trim();
-      // Only the first line: a literal backslash-n once ran the whole header into the name.
-      const valueOf = f => String(f.value || '').split(/\\n|\n/)[0].trim();
+      // Only the first line, and only up to a second "Label:" on it: a literal
+      // backslash-n, or "Ana B. Cruz Position: Service Crew" on one line, once
+      // ran the rest of the header into the name.
+      const valueOf = f => String(f.value || '').split(/\\n|\n/)[0]
+        .split(NEXT_HEADER_LABEL)[0].trim();
       for (const pattern of EMPLOYEE_NAME_LABELS) {
         const hit = fields.find(f => pattern.test(labelOf(f)) && valueOf(f));
         if (hit) return valueOf(hit);
