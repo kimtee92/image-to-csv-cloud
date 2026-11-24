@@ -338,6 +338,27 @@ def test_hours_in_holiday_pay_is_not_a_holiday_hint():
     pay = row(date="10/28/26", holiday_pay="180", total="780", net_total="780")
     assert tk.suggest_tags([pay])[date(2026, 10, 28)].tag == "SH"
 
+
+def test_single_punch_at_shift_start_is_the_time_in():
+    """24 Chicken, 2 Nov: "9-7" came back as TIME IN "" and TIME OUT "9:00". The one
+    punch is the time in; with 8 NORMAL hrs printed, the day ends at the scheduled end."""
+    d = row(date="11/2/26", schedule="9-7", time_in="", time_out="9:00")
+    assert (d.time_in, d.time_out) == ("9:00", "19:00"), d
+    r = tk.calculate_day(d)
+    assert r.worked and any("time out not read" in f for f in r.flags), r.flags
+    nothing_printed = row(date="11/2/26", schedule="9-7", time_in="", time_out="9:00", normal="0")
+    assert (nothing_printed.time_in, nothing_printed.time_out) == ("9:00", None)
+    late_out = row(date="11/2/26", schedule="9-7", time_in="", time_out="19:00")
+    assert (late_out.time_in, late_out.time_out) == (None, "19:00")   # not at the start: left alone
+
+
+def test_review_keeps_what_was_read_off_the_sheet():
+    """The review step re-tags each day; it once rebuilt the day and lost the OT check."""
+    d = row(date="11/4/26", schedule="12-10", time_in="12:00", time_out="24:00")
+    res = tk.review_employee("Test", [d])
+    flags = [f for x in res.employee.days for f in x.flags]
+    assert any("sheet shows no OT" in f for f in flags), flags
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

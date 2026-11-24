@@ -32,6 +32,7 @@ midnight run on (01:30 the next morning = 25:30 = 1530).
 """
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -268,10 +269,24 @@ def day_from_row(values: dict, default_year: int | None = None) -> "DayInput | N
     marks = [m for m in marks if m and not re.fullmatch(r"[\d.,\s|-]+", m)]
     pay_text = str(values.get("holiday_pay") or "")
     pay = _NUMBER.search(pay_text.replace(",", ""))
-    return DayInput(d, str(values.get("schedule") or ""), t_in, t_out,
+    schedule = str(values.get("schedule") or "")
+    notes = []
+    if t_in is None and t_out is not None:
+        # One punch, read under TIME OUT, at the shift's start (24 Chicken, 2 Nov:
+        # "9-7", only "9:00" came back): it is the time in, and the time out was lost.
+        sched, punch = parse_schedule(schedule), parse_time(t_out)
+        if sched.kind == "shift" and abs(punch - sched.start) <= 60:
+            t_in, t_out = t_out, None
+            normal = _numbers(values.get("normal"))
+            if normal and normal[0] >= 8:
+                # The sheet itself printed a full day's NORMAL hours, so take the scheduled end.
+                t_out = f"{sched.end // 60 % 24:02d}:{sched.end % 60:02d}"
+                notes.append(f"time out not read: took the scheduled end {t_out} because the "
+                             f"sheet prints {normal[0]:g} NORMAL hrs; check it")
+    return DayInput(d, schedule, t_in, t_out,
                     remarks=" | ".join(dict.fromkeys(marks)),
                     holiday_pay=pay.group(0) if pay else None,
-                    printed_ot=_printed_ot(values))
+                    printed_ot=_printed_ot(values), notes=tuple(notes))
 
 
 def _numbers(text) -> list[float]:
@@ -326,6 +341,7 @@ class DayInput:
     remarks: str = ""             # handwritten marks read off the scan: WDO, SPL, OT ...
     holiday_pay: object = None    # what the sheet printed in HOLIDAY PAY
     printed_ot: bool | None = None  # does the sheet print any OT that day? None: can't tell
+    notes: tuple = ()             # what reading the row assumed; shown as checks
 
 
 @dataclass
@@ -348,6 +364,7 @@ class DayResult:
 def calculate_day(day: DayInput, profile: Profile = CHICKEN_24) -> DayResult:
     tag = normalize_tag(day.tag)
     res = DayResult(date=day.date, tag=tag)
+    res.flags.extend(day.notes)
     if tag not in TAG_MATRIX and tag != "ULH":
         res.flags.append(f"unknown Remarks tag {day.tag!r}")
         tag = res.tag = ""
@@ -634,8 +651,7 @@ def review_employee(name: str, days: list[DayInput], profile: Profile = CHICKEN_
             tag = suggestions[d.date].tag
         else:
             tag = ""
-        tagged.append(DayInput(d.date, d.schedule, d.time_in, d.time_out, tag,
-                               d.remarks, d.holiday_pay))
+        tagged.append(dataclasses.replace(d, tag=tag))   # keeps every field read off the sheet
     emp = calculate_employee(name, tagged, profile, hol.legal_holidays(extra_holidays))
     return ReviewResult(emp, suggestions, {d.date: normalize_tag(d.tag) for d in tagged})
 
