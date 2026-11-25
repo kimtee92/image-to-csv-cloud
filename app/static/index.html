@@ -2694,6 +2694,7 @@
     let tkClients = [];
     let tkTags = {};          // "fileName|YYYY-MM-DD" -> tag ("" = regular)
     let tkAdjust = {};        // "fileName|YYYY-MM-DD" -> Late/UT minutes added by hand (overbreak)
+    let tkEdited = {};        // "fileName|YYYY-MM-DD" -> {in, out} as first read, for days edited on review
     let tkHolidays = [];      // [{date, kind, name}] local holidays for this batch
     let tkData = null;
     let tkOpen = {};          // employee index -> expanded
@@ -2778,6 +2779,41 @@
         }
       });
       return { tags, adjustments };
+    }
+
+    // The extracted row for one date in a result: edits on the review screen go into the
+    // rows themselves, so the review, the Excel download and the CSV all carry them.
+    function tkRowFor(r, isoDate) {
+      const h = (r.headers || []).map(x => String(x).toLowerCase());
+      const di = h.findIndex(x => /date/.test(x));
+      const ii = h.findIndex(x => /time\s*in|first\s*in/.test(x));
+      const oi = h.findIndex(x => /time\s*out|final\s*out/.test(x));
+      if (di < 0 || ii < 0 || oi < 0) return null;
+      const [, mm, dd] = isoDate.split('-').map(Number);
+      const row = (r.rows || []).find(row => {
+        const m = String(row[di] || '').match(/^\s*(\d{1,2})[\/.-](\d{1,2})/);
+        return m && +m[1] === mm && +m[2] === dd;
+      });
+      return row ? { row, ii, oi } : null;
+    }
+
+    function setTkTime(fileName, date, which, value) {
+      const r = batchResults.find(x => x.fileName === fileName && x.status === 'done');
+      const hit = r && tkRowFor(r, date);
+      if (!hit) { alert('Could not find this day in the extracted table.'); return; }
+      const v = String(value || '').trim();
+      if (v && !/^\d{1,2}:\d{2}$/.test(v)) {
+        alert('Enter the time as HH:MM, for example 21:30.');
+        renderTimekeeping();
+        return;
+      }
+      const key = `${fileName}|${date}`;
+      if (!tkEdited[key]) tkEdited[key] = { in: hit.row[hit.ii], out: hit.row[hit.oi] };
+      hit.row[which === 'in' ? hit.ii : hit.oi] = v;
+      const first = tkEdited[key];
+      if (hit.row[hit.ii] === first.in && hit.row[hit.oi] === first.out) delete tkEdited[key];
+      if (batchResults.indexOf(r) === activeResultIndex) renderTable();
+      computeTimekeeping();
     }
 
     function setTkAdjust(fileName, date, value) {
@@ -2884,10 +2920,17 @@
             .filter(([c]) => !['DAYS', 'WDO', 'SPL. HOL.', 'SPL. HOL. / WDO', 'LEG. HOL.', 'LEG. HOL. / WDO', 'U.LEG. HOL.', 'UT'].includes(c))
             .map(([c, v]) => `${escapeHtml(TK_SHORT[c] || c)} ${tkNum(c, v)}`).join(' · ');
           const credit = d.columns['U.LEG. HOL.'] ? 'ULH 1 day' : '';
-          const bg = d.flags.length ? 'background:rgba(214,138,0,0.08);' : '';
+          const edited = tkEdited[`${e.file}|${d.date}`];
+          const dayFlags = edited
+            ? [`times edited by hand (read as ${edited.in || '-'} to ${edited.out || '-'})`, ...d.flags] : d.flags;
+          const bg = dayFlags.length ? 'background:rgba(214,138,0,0.08);' : '';
           detail += `<tr style="${bg}">` +
             `<td ${td}>${d.date.slice(5)} ${d.weekday}</td>` +
-            `<td ${td}>${escapeHtml(d.schedule)}</td><td ${td}>${escapeHtml(d.time_in)}</td><td ${td}>${escapeHtml(d.time_out)}</td>` +
+            `<td ${td}>${escapeHtml(d.schedule)}</td>` +
+            ['in', 'out'].map(w => `<td ${td}><input type="text" inputmode="numeric" value="${escapeHtml(w === 'in' ? d.time_in : d.time_out)}" ` +
+              `placeholder="HH:MM" title="Correct the time ${w} (HH:MM, 24-hour)" ` +
+              `onchange="setTkTime(${fileArg}, '${d.date}', '${w}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
+              `style="width:3.6rem;background:var(--aero-input-bg);border:1px solid ${edited ? '#d68a00' : 'var(--aero-input-border)'};color:var(--aero-text);"></td>`).join('') +
             `<td ${td}>${escapeHtml(d.remarks)}</td>` +
             `<td class="px-2 py-1" style="color:var(--aero-text);border-bottom:1px solid var(--aero-glass-border);min-width:200px;max-width:320px;white-space:normal;">` +
             `<select onchange="setTkTag(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
@@ -2899,7 +2942,7 @@
               `onchange="setTkAdjust(${fileArg}, '${d.date}', this.value)" class="text-xs rounded px-1 py-0.5" ` +
               `style="width:4.5rem;background:var(--aero-input-bg);border:1px solid var(--aero-input-border);color:var(--aero-text);">` : '') +
             `</td>` +
-            `<td ${td} style="color:#d68a00;white-space:normal;">${d.flags.map(escapeHtml).join('<br>')}</td></tr>`;
+            `<td ${td} style="color:#d68a00;white-space:normal;">${dayFlags.map(escapeHtml).join('<br>')}</td></tr>`;
         }
         detail += `</tbody></table></div></div>`;
       });
@@ -2932,6 +2975,7 @@
       batchRotationResolved = false;
       tkTags = {};
       tkAdjust = {};
+      tkEdited = {};
       tkHolidays = [];
       tkData = null;
       tkOpen = {};
